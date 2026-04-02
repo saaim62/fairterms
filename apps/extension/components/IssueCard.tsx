@@ -60,7 +60,9 @@ export const IssueCard = ({ issue, onShowOnPage }: IssueCardProps) => (
       marginBottom: 12,
       border: "1px solid rgba(255,255,255,0.05)"
     }}>
-      "{issue.evidence_quote.length > 100 ? issue.evidence_quote.slice(0, 100) + "..." : issue.evidence_quote}"
+      {issue.evidence_quote.length > 100
+        ? issue.evidence_quote.slice(0, 100) + "..."
+        : issue.evidence_quote}
     </div>
 
     <button

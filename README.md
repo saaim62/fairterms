@@ -26,7 +26,7 @@ The current MVP includes:
   - FastAPI service
   - `GET /health` endpoint
   - `POST /analyze` endpoint for contract text analysis
-  - Rule-based clause detection engine
+  - Rule-based clause detection plus optional **Groq** LLM pass (same categories, merged results)
 - **Shared Contracts (`packages/shared-types`)**
   - TypeScript types used across extension and backend integration
 - **AI Engine Placeholder (`packages/ai-engine`)**
@@ -88,6 +88,16 @@ Verify:
 
 - Health: `http://127.0.0.1:8000/health`
 
+#### Optional: Groq (improved analysis)
+
+1. Copy `apps/api/.env.example` to `apps/api/.env`.
+2. Set `GROQ_API_KEY` from [Groq Console](https://console.groq.com/) (never commit `.env`).
+3. Restart the API. Responses include `analysis_source`: `"rules"` or `"rules+groq"`.
+
+Groq calls log to the API terminal with the `[Groq]` prefix (request size, token usage, raw preview, parse errors, accepted issue counts). Set `FAIRTERMS_LOG_LLM_FULL=1` in `.env` to print the full JSON body.
+
+Rule hits take precedence per category; Groq adds **additional** categories the regex engine missed. If Groq is unavailable, the API falls back to rules only.
+
 ### 2) Run extension
 
 ```bash
@@ -142,6 +152,7 @@ interface AnalyzeResponse {
   signal: "red" | "yellow" | "green"
   source_url?: string | null
   issue_count: number
+  analysis_source?: "rules" | "rules+groq"
   issues: {
     category: string
     label: string

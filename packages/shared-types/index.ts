@@ -14,5 +14,7 @@ export interface AnalyzeResponse {
   source_url?: string | null
   issue_count: number
   issues: RiskIssue[]
+  /** "rules" | "rules+groq" when Groq API key is configured */
+  analysis_source?: string
   disclaimer: string
 }

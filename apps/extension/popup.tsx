@@ -4,10 +4,34 @@ import { AnalyzeButton } from "./components/AnalyzeButton"
 import { IssueCard } from "./components/IssueCard"
 import { PopupHeader } from "./components/PopupHeader"
 import { StatusCard } from "./components/StatusCard"
+import { extractTabTextForAnalyze } from "./lib/extractPageText"
 import { theme } from "./styles/theme"
 import type { AnalyzeResponse, RiskIssue } from "../../packages/shared-types"
 
 const API_URL = "http://localhost:8000/analyze"
+
+/** Strip LLM/UI wrapping quotes so matching uses the same text as the page. */
+function cleanEvidenceForLocate(raw: string): string {
+  let s = (raw || "").trim()
+  for (;;) {
+    let changed = false
+    if (
+      (s.startsWith('"') && s.endsWith('"')) ||
+      (s.startsWith("'") && s.endsWith("'"))
+    ) {
+      s = s.slice(1, -1).trim()
+      changed = true
+    } else if (s.startsWith("\u201c") && s.endsWith("\u201d")) {
+      s = s.slice(1, -1).trim()
+      changed = true
+    } else if (s.startsWith("\u2018") && s.endsWith("\u2019")) {
+      s = s.slice(1, -1).trim()
+      changed = true
+    }
+    if (!changed) break
+  }
+  return s.trim()
+}
 
 function IndexPopup() {
   const [loading, setLoading] = useState(false)
@@ -34,13 +58,13 @@ function IndexPopup() {
         throw new Error("No active tab found")
       }
 
-      const [{ result: extractedText }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => {
-          const text = document.body?.innerText || ""
-          return text.slice(0, 30000)
-        }
-      })
+      const extractedText = await extractTabTextForAnalyze(tab.id, tab.url)
+
+      if (!extractedText.trim()) {
+        throw new Error(
+          "No readable text found. For PDFs: enable “Allow access to file URLs” in chrome://extensions for local files, and note some scanned/image-only PDFs do not contain selectable text."
+        )
+      }
 
       const response = await fetch(API_URL, {
         method: "POST",
@@ -71,9 +95,11 @@ function IndexPopup() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) return
 
-      const [{ result: didHighlight }] = await chrome.scripting.executeScript({
+      const cleanedQuote = cleanEvidenceForLocate(issue.evidence_quote)
+
+      const locateScript = {
         target: { tabId: tab.id },
-        args: [issue.evidence_quote, issue.label, issue.category],
+        args: [cleanedQuote, issue.label, issue.category],
         func: (evidenceQuote: string, label: string, category: string) => {
           const HIGHLIGHT_ATTR = "data-fairterms-highlight"
           const previous = document.querySelectorAll(`mark[${HIGHLIGHT_ATTR}]`)
@@ -85,116 +111,407 @@ function IndexPopup() {
             parent.normalize()
           })
 
-          const normalize = (value: string) =>
-            value.toLowerCase().replace(/\s+/g, " ").trim()
-
-          const normalizedQuote = normalize(evidenceQuote)
-          const rawQuote = (evidenceQuote || "").toLowerCase().trim()
-          const quoteWords = normalizedQuote
-            .split(" ")
-            .filter((w) => w.length > 3)
-            .slice(0, 16)
-
-          const categoryHints: Record<string, string[]> = {
-            unilateral_changes: ["change these terms", "may change", "sole discretion"],
-            auto_renewal: ["auto-renew", "renews automatically", "billing cycle"],
-            arbitration_waiver: ["binding arbitration", "class action waiver"],
-            data_rights: ["license", "third parties", "share", "irrevocable"],
-            cancellation_friction: ["non-refundable", "no refunds", "cancel"]
+          const stripOuterQuotes = (s: string) => {
+            let t = (s || "").trim()
+            for (;;) {
+              let ch = false
+              if (
+                (t.startsWith('"') && t.endsWith('"')) ||
+                (t.startsWith("'") && t.endsWith("'"))
+              ) {
+                t = t.slice(1, -1).trim()
+                ch = true
+              } else if (t.startsWith("\u201c") && t.endsWith("\u201d")) {
+                t = t.slice(1, -1).trim()
+                ch = true
+              } else if (t.startsWith("\u2018") && t.endsWith("\u2019")) {
+                t = t.slice(1, -1).trim()
+                ch = true
+              }
+              if (!ch) break
+            }
+            return t
           }
 
-          const hints = (categoryHints[category] || []).map((x) => x.toLowerCase())
-          const searchTerms = [...hints, ...quoteWords.map((w) => w.toLowerCase())].slice(0, 20)
-          const phraseProbes = [rawQuote, rawQuote.slice(0, 140), rawQuote.slice(0, 90)].filter(
-            (x) => x && x.length > 35
-          )
-
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-          let bestNode: Text | null = null
-          let bestScore = 0
-          let bestStart = -1
-          let bestLen = 0
-
-          while (walker.nextNode()) {
-            const node = walker.currentNode as Text
-            const raw = node.textContent || ""
-            const text = raw.toLowerCase()
-            if (!text || text.trim().length < 25) continue
-
-            let score = 0
-            let startIndex = -1
-            let highlightLen = 0
-
-            for (const probe of phraseProbes) {
-              const idx = text.indexOf(probe)
-              if (idx !== -1) {
-                score += 12
-                startIndex = idx
-                highlightLen = probe.length
-                break
-              }
-            }
-
-            for (const term of searchTerms) {
-              if (!term) continue
-              const idx = text.indexOf(term)
-              if (idx !== -1) {
-                score += term.includes(" ") ? 3 : 1
-                if (startIndex === -1) startIndex = idx
-              }
-            }
-
-            const quoteProbe = normalizedQuote.slice(0, 60).toLowerCase()
-            if (quoteProbe && text.includes(quoteProbe)) {
-              score += 6
-            }
-
-            if (score > bestScore && startIndex !== -1) {
-              bestScore = score
-              bestNode = node
-              bestStart = startIndex
-              bestLen = highlightLen
-            }
+          const canonicalChar = (ch: string) => {
+            if (ch === "\u201c" || ch === "\u201d" || ch === "\u201e" || ch === "\u201f") return '"'
+            if (ch === "\u2018" || ch === "\u2019" || ch === "\u201a" || ch === "\u201b") return "'"
+            if (ch === "\u2013" || ch === "\u2014") return "-"
+            return ch
           }
 
-          if (!bestNode || bestScore < 2) return false
+          const normalizeWithMap = (raw: string) => {
+            let out = ""
+            const map: number[] = []
+            let prevSpace = true
+            for (let i = 0; i < raw.length; i += 1) {
+              const c = canonicalChar(raw[i]).toLowerCase()
+              const isSpace = /\s/.test(c)
+              if (isSpace) {
+                if (!prevSpace) {
+                  out += " "
+                  map.push(i)
+                  prevSpace = true
+                }
+              } else {
+                out += c
+                map.push(i)
+                prevSpace = false
+              }
+            }
+            while (out.endsWith(" ")) {
+              out = out.slice(0, -1)
+              map.pop()
+            }
+            return { text: out, map }
+          }
 
-          const raw = bestNode.textContent || ""
-          const start = Math.max(0, bestStart)
-          const end = Math.min(raw.length, start + (bestLen > 0 ? bestLen : 220))
-          if (end <= start) return false
+          const core = stripOuterQuotes(evidenceQuote)
+          if (!core) return false
 
-          const range = document.createRange()
-          range.setStart(bestNode, start)
-          range.setEnd(bestNode, end)
-
-          const mark = document.createElement("mark")
-          mark.setAttribute(HIGHLIGHT_ATTR, label)
+          const redCategories = new Set([
+            "zombie_renewal",
+            "arbitration_waiver",
+            "class_bar_standalone",
+            "data_succession",
+            "gag_clauses",
+            "unilateral_interpretation",
+            "liquidated_damages_penalties",
+            "perpetual_restraint",
+            "waiver_of_statutory_rights",
+            "device_exploitation"
+          ])
           const highlightColor =
             label.toLowerCase().includes("safe") || category === "safe"
               ? "#22C55E"
-              : category === "arbitration_waiver" || category === "auto_renewal"
+              : redCategories.has(category)
                 ? "#EF4444"
                 : "#F59E0B"
-          
-          mark.style.backgroundColor = `${highlightColor}33`
-          mark.style.outline = `2px solid ${highlightColor}`
-          mark.style.borderRadius = "4px"
-          mark.style.padding = "0 2px"
-          mark.style.boxShadow = `0 0 12px ${highlightColor}44`
-          mark.style.transition = "all 0.3s ease"
 
-          range.surroundContents(mark)
-          mark.scrollIntoView({ behavior: "smooth", block: "center" })
-          return true
+          const isDecimalDot = (s: string, i: number) => {
+            if (i < 0 || i >= s.length || s[i] !== ".") return false
+            const prev = i > 0 ? s[i - 1] : ""
+            const next = i + 1 < s.length ? s[i + 1] : ""
+            return /\d/.test(prev) && /\d/.test(next)
+          }
+
+          const firstClauseBeforeNonDecimalPeriod = (s: string) => {
+            for (let i = 0; i < s.length; i += 1) {
+              if (s[i] !== ".") continue
+              if (isDecimalDot(s, i)) continue
+              const slice = s.slice(0, i).trim()
+              if (slice.length >= 18) return slice
+            }
+            return ""
+          }
+
+          const expandOffsetsToFullLine = (text: string, start: number, end: number) => {
+            const lineStart = text.lastIndexOf("\n", Math.max(0, start - 1)) + 1
+            let lineEnd = text.indexOf("\n", end)
+            if (lineEnd === -1) lineEnd = text.length
+            return { start: lineStart, end: lineEnd }
+          }
+
+          const expandRangeToFullLine = (range: Range) => {
+            const { startContainer, endContainer, startOffset, endOffset } = range
+            if (
+              startContainer !== endContainer ||
+              startContainer.nodeType !== Node.TEXT_NODE
+            ) {
+              return range.cloneRange()
+            }
+            const t = startContainer.textContent || ""
+            let { start: ls, end: le } = expandOffsetsToFullLine(t, startOffset, endOffset)
+            if (le <= ls) le = Math.min(t.length, ls + 1)
+            const r = document.createRange()
+            r.setStart(startContainer, Math.max(0, Math.min(ls, t.length)))
+            r.setEnd(startContainer, Math.max(0, Math.min(le, t.length)))
+            return r
+          }
+
+          const wrapRangeWithMark = (range: Range) => {
+            const mark = document.createElement("mark")
+            mark.setAttribute(HIGHLIGHT_ATTR, label)
+            mark.style.backgroundColor = `${highlightColor}33`
+            mark.style.outline = `2px solid ${highlightColor}`
+            mark.style.borderRadius = "4px"
+            mark.style.padding = "0 2px"
+            mark.style.boxShadow = `0 0 12px ${highlightColor}44`
+            mark.style.transition = "all 0.3s ease"
+
+            try {
+              range.surroundContents(mark)
+            } catch {
+              const frag = range.extractContents()
+              mark.appendChild(frag)
+              range.insertNode(mark)
+            }
+            mark.scrollIntoView({ behavior: "smooth", block: "center" })
+            return true
+          }
+
+          // First try browser-native text finding (handles cross-node text well).
+          const clauseBeforePeriod = firstClauseBeforeNonDecimalPeriod(core)
+          const nativeFindProbes = [
+            core,
+            core.slice(0, 260),
+            core.slice(0, 180),
+            core.slice(0, 120),
+            clauseBeforePeriod,
+            core.split(";")[0] || ""
+          ]
+            .map((x) => x.trim())
+            .filter((x) => x.length >= 18)
+
+          const selection = window.getSelection()
+          for (const probe of nativeFindProbes) {
+            selection?.removeAllRanges()
+            const found = (window as any).find(
+              probe,
+              false,
+              false,
+              true,
+              false,
+              false,
+              false
+            )
+            if (!found) continue
+            const sel = window.getSelection()
+            if (!sel || sel.rangeCount === 0) continue
+            const range = expandRangeToFullLine(sel.getRangeAt(0).cloneRange())
+            sel.removeAllRanges()
+            return wrapRangeWithMark(range)
+          }
+
+          const isVisibleTextNode = (node: Text) => {
+            const parent = node.parentElement
+            if (!parent) return false
+            const tag = parent.tagName
+            if (
+              tag === "SCRIPT" ||
+              tag === "STYLE" ||
+              tag === "NOSCRIPT" ||
+              tag === "TEXTAREA" ||
+              tag === "OPTION"
+            ) {
+              return false
+            }
+            const style = window.getComputedStyle(parent)
+            return style.display !== "none" && style.visibility !== "hidden"
+          }
+
+          type NodeRange = {
+            node: Text
+            start: number
+            end: number
+          }
+
+          const nodes: NodeRange[] = []
+          let flatRaw = ""
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+          while (walker.nextNode()) {
+            const node = walker.currentNode as Text
+            if (!node.textContent || !node.textContent.trim()) continue
+            if (!isVisibleTextNode(node)) continue
+            const start = flatRaw.length
+            flatRaw += node.textContent
+            const end = flatRaw.length
+            nodes.push({ node, start, end })
+            flatRaw += "\n"
+          }
+
+          if (!flatRaw || nodes.length === 0) return false
+
+          const docNorm = normalizeWithMap(flatRaw)
+          const quoteNorm = normalizeWithMap(core).text
+          if (!quoteNorm) return false
+
+          const categoryHints: Record<string, string[]> = {
+            unilateral_changes: ["change terms", "amend terms", "without notice", "continued use"],
+            retroactive_changes: ["retroactive", "prior conduct", "already collected"],
+            auto_renewal: ["auto-renew", "renews automatically", "subscription fee", "billing cycle"],
+            zombie_renewal: ["reminder", "automatically renew", "annual"],
+            arbitration_waiver: ["binding arbitration", "class action waiver", "jury trial"],
+            class_bar_standalone: ["class action", "representative action", "no class"],
+            data_rights: ["perpetual license", "irrevocable license", "third parties", "share data"],
+            data_succession: ["successor", "merger", "bankruptcy", "assign"],
+            cross_service_tracking: ["cross-service", "across our products", "combine data"],
+            fee_modification: ["price", "fee", "notice", "grandfather"],
+            cancellation_friction: ["non-refundable", "no refunds", "cancel", "cancellation fee"],
+            gag_clauses: ["non-disparagement", "negative review", "review"],
+            unilateral_interpretation: ["sole discretion", "interpret", "exclusive right"],
+            liquidated_damages_penalties: ["liquidated damages", "per breach", "infraction"],
+            one_way_attorneys_fees: ["attorneys fees", "prevailing party"],
+            no_injunctive_relief: ["injunctive", "equitable relief"],
+            mandatory_delay_tactics: ["mediation", "before filing", "days before"],
+            perpetual_restraint: ["non-compete", "survive termination"],
+            no_assignment_by_user: ["may not assign", "assignable"],
+            overbroad_ip_restrictions: ["reverse engineer", "decompile"],
+            device_exploitation: ["cryptomining", "processing power", "bandwidth"],
+            shadow_profiling: ["contacts", "data broker", "non-user"],
+            waiver_of_statutory_rights: ["ccpa", "gdpr", "waive"],
+            english_language_supremacy: ["english version", "translation"],
+            survival_of_termination_vague: ["survive termination", "necessary provisions"],
+            limitation_of_liability: ["limitation of liability", "consequential damages", "not liable"],
+            disclaimer_of_warranties: ["as is", "merchantability", "disclaimer of warranties"],
+            broad_indemnity: ["indemnify", "hold harmless", "defend"],
+            forum_selection_exclusive: ["exclusive jurisdiction", "exclusive venue", "jurisdiction"],
+            discretionary_termination: ["sole discretion", "suspend", "terminate"],
+            children_data_collection: ["under 13", "children", "parental consent"],
+            marketing_communications_burden: ["marketing", "promotional", "sms", "opt out"]
+          }
+
+          const tokenWords = quoteNorm
+            .split(" ")
+            .map((w) => w.trim())
+            .filter((w) => w.length > 2)
+          const quoteProbes = [
+            quoteNorm,
+            quoteNorm.slice(0, 260),
+            quoteNorm.slice(0, 180),
+            quoteNorm.slice(0, 120),
+            quoteNorm.slice(0, 80)
+          ].filter((p) => p.length >= 22)
+
+          let bestNormStart = -1
+          let bestNormLen = -1
+          let bestScore = -1
+
+          for (const probe of quoteProbes) {
+            const idx = docNorm.text.indexOf(probe)
+            if (idx !== -1 && probe.length > bestScore) {
+              bestNormStart = idx
+              bestNormLen = probe.length
+              bestScore = probe.length + 50
+              break
+            }
+          }
+
+          if (bestNormStart === -1 && tokenWords.length > 0) {
+            const anchorWords = tokenWords.slice(0, 12)
+            const first = anchorWords[0]
+            const expectedLen = Math.max(90, Math.min(340, quoteNorm.length + 60))
+            let idx = docNorm.text.indexOf(first)
+            while (idx !== -1) {
+              let score = 0
+              let cursor = idx
+              for (const w of anchorWords) {
+                const next = docNorm.text.indexOf(w, cursor)
+                if (next !== -1 && next - idx <= 520) {
+                  score += w.length
+                  cursor = next + w.length
+                }
+              }
+              const hints = (categoryHints[category] || []).map((h) =>
+                normalizeWithMap(h).text
+              )
+              for (const h of hints) {
+                if (h && docNorm.text.indexOf(h, idx) !== -1 && docNorm.text.indexOf(h, idx) - idx <= 520) {
+                  score += 8
+                }
+              }
+              if (score > bestScore) {
+                bestScore = score
+                bestNormStart = idx
+                bestNormLen = expectedLen
+              }
+              idx = docNorm.text.indexOf(first, idx + 1)
+            }
+          }
+
+          if (bestNormStart === -1 || bestScore < 20) return false
+
+          const normEnd = Math.min(docNorm.text.length, bestNormStart + bestNormLen)
+          const rawStart = docNorm.map[Math.max(0, bestNormStart)] ?? 0
+          const rawEnd = (docNorm.map[Math.max(0, normEnd - 1)] ?? rawStart) + 1
+          if (rawEnd <= rawStart) return false
+
+          let chosen: NodeRange | null = null
+          let chosenLocalStart = 0
+          let chosenLocalEnd = 0
+          let overlapBest = 0
+          for (const r of nodes) {
+            const overlapStart = Math.max(rawStart, r.start)
+            const overlapEnd = Math.min(rawEnd, r.end)
+            const overlap = overlapEnd - overlapStart
+            if (overlap > overlapBest) {
+              overlapBest = overlap
+              chosen = r
+              chosenLocalStart = overlapStart - r.start
+              chosenLocalEnd = overlapEnd - r.start
+            }
+          }
+
+          if (!chosen || overlapBest <= 0) return false
+          const nodeText = chosen.node.textContent || ""
+          if (!nodeText) return false
+          let start = Math.max(0, Math.min(chosenLocalStart, nodeText.length - 1))
+          let end = Math.max(start + 1, Math.min(chosenLocalEnd, nodeText.length))
+          const line = expandOffsetsToFullLine(nodeText, start, end)
+          start = line.start
+          end = line.end
+          if (end <= start) end = Math.min(nodeText.length, start + 1)
+
+          const range = document.createRange()
+          range.setStart(chosen.node, start)
+          range.setEnd(chosen.node, end)
+          return wrapRangeWithMark(range)
         }
-      })
+      }
+
+      const tryLocate = async () => {
+        const [res] = await chrome.scripting.executeScript(locateScript)
+        return Boolean(res?.result)
+      }
+
+      const waitForTabReload = async (tabId: number) =>
+        await new Promise<void>((resolve) => {
+          let done = false
+          const onUpdated = (updatedTabId: number, info: chrome.tabs.TabChangeInfo) => {
+            if (updatedTabId === tabId && info.status === "complete") {
+              chrome.tabs.onUpdated.removeListener(onUpdated)
+              done = true
+              resolve()
+            }
+          }
+          chrome.tabs.onUpdated.addListener(onUpdated)
+          setTimeout(() => {
+            if (!done) {
+              chrome.tabs.onUpdated.removeListener(onUpdated)
+              resolve()
+            }
+          }, 6000)
+        })
+
+      let didHighlight = false
+      try {
+        didHighlight = await tryLocate()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        const isContextInvalidated =
+          msg.toLowerCase().includes("extension context invalidated") ||
+          msg.toLowerCase().includes("context invalidated")
+
+        if (!isContextInvalidated) throw err
+
+        setActionMessage("Recovering stale extension context...")
+        await chrome.tabs.reload(tab.id)
+        await waitForTabReload(tab.id)
+        didHighlight = await tryLocate()
+      }
 
       if (didHighlight) {
         setActionMessage(`Located: ${issue.label}`)
+      } else {
+        setActionMessage(
+          "Could not locate text on this page (try refreshing the tab, or the viewer may block highlighting)."
+        )
       }
     } catch (err) {
       // silent fail for highlight
+      setActionMessage(
+        "Could not locate text on this page (try refreshing the tab, or the viewer may block highlighting)."
+      )
     }
   }
 
