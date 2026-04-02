@@ -613,6 +613,22 @@ def _pick_signal(issues: list[dict]) -> str:
     return "green"
 
 
+def _severity_sort_key(issue: dict) -> tuple[int, float, str]:
+    """Red first, then yellow; higher confidence first; stable label tie-break."""
+    sev = str(issue.get("severity", "")).lower()
+    rank = 0 if sev == "red" else 1 if sev == "yellow" else 2
+    try:
+        conf = float(issue.get("confidence", 0) or 0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    label = str(issue.get("label", ""))
+    return (rank, -conf, label)
+
+
+def _sort_issues_by_severity(issues: list[dict]) -> list[dict]:
+    return sorted(issues, key=_severity_sort_key)
+
+
 def _merge_issues(rule_issues: list[dict], groq_issues: list[dict] | None) -> list[dict]:
     """Prefer rule-based hit per category; add Groq-only categories."""
     by_cat: dict[str, dict] = {}
@@ -662,6 +678,8 @@ def analyze_contract_text(text: str, source_url: str | None = None) -> dict:
         if groq_issues is not None:
             analysis_source = "rules+groq"
             issues = _merge_issues(issues, groq_issues)
+
+    issues = _sort_issues_by_severity(issues)
 
     return {
         "signal": _pick_signal(issues),

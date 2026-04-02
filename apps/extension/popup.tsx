@@ -48,6 +48,17 @@ function IndexPopup() {
         : "Secure"
   }, [result])
 
+  const issuesSorted = useMemo(() => {
+    if (!result?.issues?.length) return []
+    const rank = (s: string) => (s === "red" ? 0 : s === "yellow" ? 1 : 2)
+    return [...result.issues].sort((a, b) => {
+      const ra = rank(a.severity)
+      const rb = rank(b.severity)
+      if (ra !== rb) return ra - rb
+      return (b.confidence ?? 0) - (a.confidence ?? 0)
+    })
+  }, [result?.issues])
+
   const analyzeCurrentPage = async () => {
     setLoading(true)
     setError("")
@@ -606,7 +617,7 @@ function IndexPopup() {
         ) : null}
 
         <div style={{ marginTop: 20, display: "grid", gap: 12 }}>
-          {result?.issues?.map((issue, idx) => (
+          {issuesSorted.map((issue, idx) => (
             <IssueCard
               key={`${issue.category}-${idx}`}
               issue={issue}
