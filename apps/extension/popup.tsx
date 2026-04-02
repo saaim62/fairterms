@@ -179,7 +179,17 @@ function IndexPopup() {
             "liquidated_damages_penalties",
             "perpetual_restraint",
             "waiver_of_statutory_rights",
-            "device_exploitation"
+            "device_exploitation",
+            "data_selling",
+            "private_message_monitoring",
+            "content_copyright_transfer",
+            "moral_rights_waiver",
+            "shortened_limitation_period",
+            "ai_training_license",
+            "biometric_harvesting",
+            "off_platform_tracking",
+            "inactivity_fee_seizure",
+            "notice_of_breach_delay"
           ])
           const highlightColor =
             label.toLowerCase().includes("safe") || category === "safe"
@@ -358,7 +368,26 @@ function IndexPopup() {
             forum_selection_exclusive: ["exclusive jurisdiction", "exclusive venue", "jurisdiction"],
             discretionary_termination: ["sole discretion", "suspend", "terminate"],
             children_data_collection: ["under 13", "children", "parental consent"],
-            marketing_communications_burden: ["marketing", "promotional", "sms", "opt out"]
+            marketing_communications_burden: ["marketing", "promotional", "sms", "opt out"],
+            data_selling: ["sell personal information", "monetize data", "sale of data"],
+            private_message_monitoring: ["private message", "direct message", "monitor communications"],
+            device_fingerprinting: ["device fingerprint", "pixel tags", "web beacons"],
+            continuous_location_tracking: ["precise location", "geolocation", "background location", "gps"],
+            content_copyright_transfer: ["assign copyright", "exclusive license", "ownership"],
+            moral_rights_waiver: ["moral rights", "waive attribution", "credit"],
+            shortened_limitation_period: ["within one year", "time limit", "barred"],
+            data_deletion_friction: ["retain after deletion", "backup copies", "no obligation to delete"],
+            third_party_disclaimer: ["not responsible third-party", "at your own risk", "no control over"],
+            force_majeure_broad: ["force majeure", "acts of god", "beyond our control"],
+            ai_training_license: ["train ai", "machine learning", "llm", "training data"],
+            biometric_harvesting: ["biometric", "facial recognition", "voiceprint", "fingerprint"],
+            off_platform_tracking: ["browser history", "outside the service", "other applications", "keystroke"],
+            inactivity_fee_seizure: ["inactivity fee", "dormant account", "unused credits expire"],
+            no_refund_on_ban: ["without refund", "forfeit purchases", "no right to a refund"],
+            payment_method_updating: ["account updater", "updated credit card", "update payment information"],
+            beta_testing_waiver: ["beta features", "experimental", "at your own risk", "pre-release software"],
+            notice_of_breach_delay: ["notify within 60 days", "90 days", "120 days", "commercially reasonable time"],
+            consent_to_background_check: ["background check", "credit check", "criminal history"]
           }
 
           const tokenWords = quoteNorm

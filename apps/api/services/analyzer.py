@@ -398,6 +398,209 @@ RULES: list[Rule] = [
             r"cannot opt[- ]?out.{0,40}(transactional|service|essential)",
         ],
     ),
+    Rule(
+        category="data_selling",
+        label="Explicit Sale of Personal Data",
+        severity="red",
+        explanation="The company may reserve the right to sell your personal information to third parties.",
+        patterns=[
+            r"(sell|sale of).{0,40}(personal data|personal information|user data)",
+            r"monetize.{0,40}(personal information|your data)",
+        ],
+    ),
+    Rule(
+        category="private_message_monitoring",
+        label="Monitoring of Private Messages",
+        severity="red",
+        explanation="The provider may read, scan, or monitor private/direct messages.",
+        patterns=[
+            r"(read|monitor|scan|review).{0,50}(private message|direct message|dms|communications)",
+            r"access.{0,30}(inbox|private content|direct message)",
+        ],
+    ),
+    Rule(
+        category="device_fingerprinting",
+        label="Advanced Device Tracking",
+        severity="yellow",
+        explanation="The service may use hard-to-block tracking methods like fingerprinting or tracking pixels.",
+        patterns=[
+            r"device fingerprint",
+            r"(web beacons|clear gifs|pixel tags)",
+            r"track.{0,40}across (websites|devices|platforms)",
+        ],
+    ),
+    Rule(
+        category="continuous_location_tracking",
+        label="Precise / Continuous Location Tracking",
+        severity="yellow",
+        explanation="Terms may allow precise or background location tracking.",
+        patterns=[
+            r"(precise|exact|geolocation).{0,30}(data|tracking)",
+            r"background.{0,40}location",
+            r"gps (coordinates|location)",
+        ],
+    ),
+    Rule(
+        category="content_copyright_transfer",
+        label="Copyright Surrender",
+        severity="red",
+        explanation="You may be transferring copyright or ownership rights in user content.",
+        patterns=[
+            r"(transfer|assign).{0,40}(copyright|intellectual property).{0,30}(to us|to company)",
+            r"exclusive license.{0,40}(user content|your content)",
+            r"relinquish.{0,40}ownership",
+        ],
+    ),
+    Rule(
+        category="moral_rights_waiver",
+        label="Waiver of Moral Rights",
+        severity="red",
+        explanation="You may waive moral rights, including attribution and integrity protections.",
+        patterns=[
+            r"waive.{0,30}moral rights",
+            r"moral rights.{0,30}relinquish",
+            r"not entitled to.{0,30}(credit|attribution)",
+        ],
+    ),
+    Rule(
+        category="shortened_limitation_period",
+        label="Shortened Statute of Limitations",
+        severity="red",
+        explanation="The legal time window to bring claims may be reduced (e.g., one year).",
+        patterns=[
+            r"(cause of action|claim).{0,60}must be (filed|commenced).{0,40}(within|no later than).{0,20}(one|1)\s*(year|yr)",
+            r"permanently barred.{0,40}(one|1)\s*year",
+            r"time limit.{0,40}bring a claim",
+        ],
+    ),
+    Rule(
+        category="data_deletion_friction",
+        label="Data Retention / Deletion Friction",
+        severity="yellow",
+        explanation="Deleting an account may not remove data, backups, or retained records.",
+        patterns=[
+            r"retain.{0,50}after (deletion|termination|cancellation)",
+            r"backup copies.{0,40}(indefinitely|perpetually|commercial reasons)",
+            r"(cannot|unable to|no obligation to).{0,40}(delete|remove).{0,30}content",
+        ],
+    ),
+    Rule(
+        category="third_party_disclaimer",
+        label="Third-Party Harm Disclaimer",
+        severity="yellow",
+        explanation="The service may disclaim responsibility for third-party links, ads, or integrations.",
+        patterns=[
+            r"not responsible.{0,40}third[- ]party (links|websites|content|ads)",
+            r"no control over.{0,40}third[- ]party",
+            r"at your own risk.{0,40}third[- ]party",
+        ],
+    ),
+    Rule(
+        category="force_majeure_broad",
+        label="Overbroad Force Majeure",
+        severity="yellow",
+        explanation="Broad force majeure language may excuse provider failures too easily.",
+        patterns=[
+            r"force majeure",
+            r"acts of god.{0,60}not liable",
+            r"beyond (our|reasonable) control.{0,40}(interruption|failure|delay)",
+        ],
+    ),
+    Rule(
+        category="ai_training_license",
+        label="AI / Machine Learning Training",
+        severity="red",
+        explanation="Your data or content may be used to train AI models without explicit opt-in.",
+        patterns=[
+            r"(train|develop|improve).{0,50}(artificial intelligence|ai model|machine learning|llm|generative)",
+            r"use (your )?content.{0,40}(training data|neural network|algorithmic)",
+        ],
+    ),
+    Rule(
+        category="biometric_harvesting",
+        label="Biometric Data Collection",
+        severity="red",
+        explanation="Terms may allow collection or processing of sensitive biometric identifiers.",
+        patterns=[
+            r"biometric (data|information)",
+            r"(facial recognition|voiceprint|retina scan|fingerprint).{0,40}(collect|store|process)",
+            r"physiological characteristics",
+        ],
+    ),
+    Rule(
+        category="off_platform_tracking",
+        label="Off-Platform / Browser Monitoring",
+        severity="red",
+        explanation="The service may monitor activity beyond its own app or website.",
+        patterns=[
+            r"(browser|browsing) history.{0,40}(collect|monitor|access|track)",
+            r"track(ing)?.{0,50}(other applications|outside the service|third[- ]party websites)",
+            r"(keystroke|key logging)",
+        ],
+    ),
+    Rule(
+        category="inactivity_fee_seizure",
+        label="Inactivity Fees / Asset Seizure",
+        severity="red",
+        explanation="Dormant accounts may incur fees or lose balances/credits over time.",
+        patterns=[
+            r"inactivity fee",
+            r"(dormant|inactive) account.{0,50}(fee|charge|forfeit|expire)",
+            r"unused (credits|funds|balance|tokens).{0,40}(expire|forfeit|reclaimed)",
+        ],
+    ),
+    Rule(
+        category="no_refund_on_ban",
+        label="Forfeiture of Purchases on Ban",
+        severity="yellow",
+        explanation="Account suspension/termination may forfeit purchases or wallet balances without refund.",
+        patterns=[
+            r"terminate.{0,50}without (refund|compensation)",
+            r"forfeit.{0,50}(purchases|credits|wallet|balance|virtual).{0,40}(upon termination|suspended)",
+            r"no right to a refund.{0,40}(suspended|terminated)",
+        ],
+    ),
+    Rule(
+        category="payment_method_updating",
+        label="Automatic Payment Method Updates",
+        severity="yellow",
+        explanation="Payment credentials may be auto-updated via card networks or banks.",
+        patterns=[
+            r"(obtain|receive|fetch).{0,40}updated (credit card|payment).{0,40}(bank|issuer)",
+            r"account updater (service|program)",
+            r"automatically update.{0,30}payment information",
+        ],
+    ),
+    Rule(
+        category="beta_testing_waiver",
+        label="Beta / Experimental Feature Immunity",
+        severity="yellow",
+        explanation="Experimental features may be offered with broad liability disclaimers.",
+        patterns=[
+            r"(beta|experimental|preview) (features|services).{0,60}(at your own risk|no warranty|disclaim all liability)",
+            r"pre[- ]release software.{0,50}as is",
+        ],
+    ),
+    Rule(
+        category="notice_of_breach_delay",
+        label="Delayed Breach Notification",
+        severity="red",
+        explanation="Terms may allow unusually delayed notice after security incidents.",
+        patterns=[
+            r"notify you.{0,40}within (60|90|120)\s*days.{0,40}(breach|unauthorized access)",
+            r"commercially reasonable time.{0,40}notify.{0,40}breach",
+        ],
+    ),
+    Rule(
+        category="consent_to_background_check",
+        label="Hidden Background Checks",
+        severity="yellow",
+        explanation="Terms may permit background, credit, or criminal checks at provider discretion.",
+        patterns=[
+            r"consent to.{0,40}(background check|credit check|criminal history)",
+            r"reserve the right to (conduct|run).{0,40}background",
+        ],
+    ),
 ]
 
 

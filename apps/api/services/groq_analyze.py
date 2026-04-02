@@ -48,6 +48,25 @@ ALLOWED_CATEGORIES = frozenset(
         "discretionary_termination",
         "children_data_collection",
         "marketing_communications_burden",
+        "data_selling",
+        "private_message_monitoring",
+        "device_fingerprinting",
+        "continuous_location_tracking",
+        "content_copyright_transfer",
+        "moral_rights_waiver",
+        "shortened_limitation_period",
+        "data_deletion_friction",
+        "third_party_disclaimer",
+        "force_majeure_broad",
+        "ai_training_license",
+        "biometric_harvesting",
+        "off_platform_tracking",
+        "inactivity_fee_seizure",
+        "no_refund_on_ban",
+        "payment_method_updating",
+        "beta_testing_waiver",
+        "notice_of_breach_delay",
+        "consent_to_background_check",
     }
 )
 
@@ -88,10 +107,29 @@ NEW HIGH-RISK CATEGORIES (commonly hidden):
 - discretionary_termination: suspend/terminate accounts or service at sole discretion, without notice/cause, or refuse service broadly
 - children_data_collection: under-13/children data practices, parental consent, or age restrictions
 - marketing_communications_burden: marketing/SMS/calls consent bundled with signup, or difficult/impossible opt-out from promotional messages
+- data_selling: explicit sale/monetization of personal data or personal information
+- private_message_monitoring: reading/scanning/monitoring private messages, inboxes, or direct communications
+- device_fingerprinting: hard-to-block tracking techniques like device fingerprinting, web beacons, clear gifs, or pixel tags
+- continuous_location_tracking: precise geolocation, GPS coordinates, or background location tracking
+- content_copyright_transfer: transfer/assignment of user copyright or exclusive ownership rights to provider
+- moral_rights_waiver: waiver/relinquishment of moral rights, attribution rights, or integrity rights in user works
+- shortened_limitation_period: aggressive time limits (often 1 year) for bringing legal claims
+- data_deletion_friction: retention after account deletion, indefinite backups, or no obligation to delete content
+- third_party_disclaimer: broad disclaimer for harms caused by third-party links, services, ads, or integrations
+- force_majeure_broad: overbroad force majeure clauses used to excuse outages/failures and avoid liability
+- ai_training_license: user data/content may be used to train or improve AI/ML/LLM systems
+- biometric_harvesting: collection/processing of biometric data (facial, voiceprint, retina, fingerprint)
+- off_platform_tracking: tracking beyond the service itself, including browser history, other apps, or key logging
+- inactivity_fee_seizure: dormant account fees, expiration/forfeiture of credits, balances, or tokens
+- no_refund_on_ban: account suspension/termination causes forfeiture of purchases/credits without refund
+- payment_method_updating: automatic updater programs fetch refreshed payment card details from issuer/network
+- beta_testing_waiver: beta/preview features carry broad "at your own risk" and liability waivers
+- notice_of_breach_delay: long breach-notice windows (e.g., 60/90/120 days) or vague delayed notice terms
+- consent_to_background_check: user consents to background/credit/criminal checks at provider discretion
 
 SEVERITY RULES:
-RED (immediate danger): arbitration/class waivers, zombie_renewal with no reminders, liquidated_damages_penalties >$500, gag_clauses prohibiting reviews, unilateral_interpretation, data_succession without consent, perpetual_restraint, waiver_of_statutory_rights (GDPR/CCPA), device_exploitation
-YELLOW (significant concern): auto_renewal with poor notice, cross_service_tracking, retroactive_changes, one_way_attorneys_fees, no_injunctive_relief, mandatory_delay_tactics, auto_upgrade_traps
+RED (immediate danger): arbitration/class waivers, zombie_renewal with no reminders, liquidated_damages_penalties >$500, gag_clauses prohibiting reviews, unilateral_interpretation, data_succession without consent, perpetual_restraint, waiver_of_statutory_rights (GDPR/CCPA), device_exploitation, explicit data_selling, private_message_monitoring, copyright transfer, moral_rights_waiver, shortened_limitation_period, ai_training_license, biometric_harvesting, off_platform_tracking, inactivity_fee_seizure, notice_of_breach_delay
+YELLOW (significant concern): auto_renewal with poor notice, cross_service_tracking, retroactive_changes, one_way_attorneys_fees, no_injunctive_relief, mandatory_delay_tactics, auto_upgrade_traps, device_fingerprinting, continuous_location_tracking, data_deletion_friction, third_party_disclaimer, force_majeure_broad, no_refund_on_ban, payment_method_updating, beta_testing_waiver, consent_to_background_check
 
 OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
 {"issues":[{"category":"exact_key_from_list","label":"Short Human Title","severity":"red"|"yellow","explanation":"Why this hurts consumers, in plain language. Mention specific unfairness mechanism.","confidence":0.0-1.0,"evidence_quote":"EXACT verbatim substring from input, max 400 chars, no paraphrasing"}]}
