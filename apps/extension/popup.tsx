@@ -109,7 +109,7 @@ function IndexPopup() {
       const cleanedQuote = cleanEvidenceForLocate(issue.evidence_quote)
 
       const locateScript = {
-        target: { tabId: tab.id },
+        target: { tabId: tab.id, allFrames: true },
         args: [cleanedQuote, issue.label, issue.category],
         func: (evidenceQuote: string, label: string, category: string) => {
           const HIGHLIGHT_ATTR = "data-fairterms-highlight"
@@ -500,8 +500,8 @@ function IndexPopup() {
       }
 
       const tryLocate = async () => {
-        const [res] = await chrome.scripting.executeScript(locateScript)
-        return Boolean(res?.result)
+        const results = await chrome.scripting.executeScript(locateScript)
+        return results.some((res) => Boolean(res.result))
       }
 
       const waitForTabReload = async (tabId: number) =>

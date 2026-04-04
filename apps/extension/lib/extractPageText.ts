@@ -54,10 +54,24 @@ function tryDecode(value: string): string {
 }
 
 function normalizePdfCandidate(raw: string): string {
-  const v = tryDecode((raw || "").trim())
+  let v = tryDecode((raw || "").trim())
   if (!v) return ""
+
   if (/^https?:\/\//i.test(v)) return v
-  if (/^file:\/\//i.test(v)) return v
+
+  if (/^file:/i.test(v)) {
+    v = v.replace(/^file:\/*/i, "file:///")
+    return v
+  }
+
+  if (/^[A-Za-z]:[\\/]/.test(v)) {
+    return `file:///${v.replace(/\\/g, "/")}`
+  }
+
+  if (/^\/[A-Za-z]:[\\/]/.test(v)) {
+    return `file://${v.replace(/\\/g, "/")}`
+  }
+
   return ""
 }
 
@@ -89,10 +103,42 @@ function extractPdfUrlCandidate(tabUrl: string): string {
   return ""
 }
 
+function collectPdfCandidatesFromPage(): string[] {
+  const urls = new Set<string>()
+  const elements = Array.from(document.querySelectorAll("iframe,embed,object,a"))
+
+  const pushCandidate = (value: string | null | undefined) => {
+    if (!value) return
+    const raw = value.trim()
+    if (!raw) return
+    if (raw.toLowerCase().includes(".pdf") || raw.toLowerCase().includes("application/pdf")) {
+      urls.add(raw)
+    }
+  }
+
+  for (const element of elements) {
+    if (element instanceof HTMLAnchorElement) {
+      pushCandidate(element.href)
+    } else if (element instanceof HTMLIFrameElement) {
+      pushCandidate(element.src)
+      pushCandidate(element.getAttribute("src"))
+    } else if (element instanceof HTMLObjectElement) {
+      pushCandidate(element.data)
+      pushCandidate(element.getAttribute("src"))
+      pushCandidate(element.getAttribute("data"))
+    } else if (element instanceof HTMLEmbedElement) {
+      pushCandidate(element.src)
+      pushCandidate(element.getAttribute("src"))
+    }
+  }
+
+  return Array.from(urls)
+}
+
 async function extractTextFromPdfUrl(url: string, maxChars: number): Promise<string> {
   try {
     const pdfjs = await import("pdfjs-dist/build/pdf.mjs")
-    const workerSrc = chrome.runtime.getURL("pdf.worker.min.mjs")
+    const workerSrc = chrome.runtime.getURL("assets/pdf.worker.min.mjs")
     pdfjs.GlobalWorkerOptions.workerSrc = workerSrc
 
     const res = await fetch(url, { credentials: "omit", cache: "no-cache" })
@@ -166,12 +212,34 @@ export async function extractTabTextForAnalyze(
   }
   merged = merged.slice(0, MAX_ANALYZE_CHARS)
 
-  const url = extractPdfUrlCandidate(tabUrl || "")
-  const tooShort = merged.trim().length < 120
-  if (tooShort && looksLikePdfUrl(url) && !isBlockedChromeUrl(url)) {
-    const fromPdf = await extractTextFromPdfUrl(url, MAX_ANALYZE_CHARS)
+  const directUrl = extractPdfUrlCandidate(tabUrl || "")
+  const candidates = [directUrl]
+
+  if (!looksLikePdfUrl(directUrl)) {
+    try {
+      const pdfCandidates = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: collectPdfCandidatesFromPage as () => string[]
+      })
+      for (const result of pdfCandidates) {
+        if (Array.isArray(result.result)) {
+          candidates.push(...result.result.map(String))
+        }
+      }
+    } catch {
+      // Ignore; candidate extraction may be blocked on some pages.
+    }
+  }
+
+  const normalizedCandidates = candidates
+    .map((raw) => normalizePdfCandidate(raw))
+    .filter((candidate) => candidate && looksLikePdfUrl(candidate) && !isBlockedChromeUrl(candidate))
+
+  for (const candidate of normalizedCandidates) {
+    const fromPdf = await extractTextFromPdfUrl(candidate, MAX_ANALYZE_CHARS)
     if (fromPdf.trim().length > merged.trim().length) {
       merged = fromPdf.slice(0, MAX_ANALYZE_CHARS)
+      break
     }
   }
 
