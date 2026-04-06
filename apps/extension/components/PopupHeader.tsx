@@ -1,3 +1,4 @@
+import { tr } from "../lib/uiStrings"
 import { theme } from "../styles/theme"
 
 export const PopupHeader = () => (
@@ -28,7 +29,7 @@ export const PopupHeader = () => (
       textTransform: "uppercase",
       letterSpacing: "0.05em"
     }}>
-      AI Contract Guardian
+      {tr("subtitle")}
     </p>
   </div>
 )

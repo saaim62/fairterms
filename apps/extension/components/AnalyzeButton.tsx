@@ -1,3 +1,4 @@
+import { tr } from "../lib/uiStrings"
 import { theme } from "../styles/theme"
 
 interface AnalyzeButtonProps {
@@ -38,10 +39,10 @@ export const AnalyzeButton = ({ loading, onClick }: AnalyzeButtonProps) => (
           borderRadius: "50%",
           animation: "spin 0.8s linear infinite"
         }} />
-        <span>Scanning...</span>
+        <span>{tr("scanning")}</span>
       </>
     ) : (
-      "Analyze Current Page"
+      tr("analyzePage")
     )}
     <style>{`
       @keyframes spin {

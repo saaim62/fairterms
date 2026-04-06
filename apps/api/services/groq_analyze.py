@@ -14,135 +14,94 @@ logger = logging.getLogger(__name__)
 _LOG_FULL = os.environ.get("FAIRTERMS_LOG_LLM_FULL", "").strip() in ("1", "true", "yes")
 _RAW_PREVIEW_LEN = int(os.environ.get("FAIRTERMS_LOG_LLM_PREVIEW", "800"))
 
-ALLOWED_CATEGORIES = frozenset(
-    {
-        "auto_renewal",
-        "zombie_renewal",
-        "arbitration_waiver",
-        "class_bar_standalone",
-        "data_rights",
-        "data_succession",
-        "cross_service_tracking",
-        "unilateral_changes",
-        "retroactive_changes",
-        "cancellation_friction",
-        "fee_modification",
-        "gag_clauses",
-        "unilateral_interpretation",
-        "liquidated_damages_penalties",
-        "one_way_attorneys_fees",
-        "no_injunctive_relief",
-        "mandatory_delay_tactics",
-        "perpetual_restraint",
-        "no_assignment_by_user",
-        "overbroad_ip_restrictions",
-        "device_exploitation",
-        "shadow_profiling",
-        "waiver_of_statutory_rights",
-        "english_language_supremacy",
-        "survival_of_termination_vague",
-        "limitation_of_liability",
-        "disclaimer_of_warranties",
-        "broad_indemnity",
-        "forum_selection_exclusive",
-        "discretionary_termination",
-        "children_data_collection",
-        "marketing_communications_burden",
-        "data_selling",
-        "private_message_monitoring",
-        "device_fingerprinting",
-        "continuous_location_tracking",
-        "content_copyright_transfer",
-        "moral_rights_waiver",
-        "shortened_limitation_period",
-        "data_deletion_friction",
-        "third_party_disclaimer",
-        "force_majeure_broad",
-        "ai_training_license",
-        "biometric_harvesting",
-        "off_platform_tracking",
-        "inactivity_fee_seizure",
-        "no_refund_on_ban",
-        "payment_method_updating",
-        "beta_testing_waiver",
-        "notice_of_breach_delay",
-        "consent_to_background_check",
-    }
-)
+from services.category_registry import ALL_CATEGORY_KEYS, CATEGORY_REGISTRY
 
-SYSTEM_PROMPT = """You are FairTerms, a forensic contract analyzer. Identify consumer-harmful clauses matching these EXACT categories:
+# Canonical keys (regex rules + locale patterns). LLM may also emit new snake_case keys; see normalize_llm_category.
+CANONICAL_CATEGORIES = ALL_CATEGORY_KEYS
 
-EXISTING CATEGORIES (enhanced detection):
-- auto_renewal: negative-option billing, auto-conversion of trials WITHOUT 7+ day clear notice, lacking email reminders before charge, or requiring cancellation BEFORE next period (vs anytime during period)
-- zombie_renewal: auto-renewal designed to exploit forgetfulness (annual subscriptions with no 30-day reminder, or hiding auto-renew status in account submenus)
-- arbitration_waiver: forced arbitration, class action bans, jury trial waivers
-- class_bar_standalone: class action waiver IN ADDITION TO arbitration (survives even if arbitration struck down), or "no representative actions" clauses
-- data_rights: perpetual/irrevocable licenses, AI/biometric data training rights, "commercial purposes" sharing, aggregation rights claiming data becomes "our proprietary information"
-- data_succession: right to transfer/sell user data to successors/acquirers in bankruptcy/M&A without notice or new consent ("asset transfer" clauses)
-- cross_service_tracking: combining data across distinct products/services (e.g., using shopping data for credit scoring) without explicit opt-in for specific secondary use
-- unilateral_changes: changes effective immediately upon posting, "continued use = consent" for material terms, or applying changes retroactively to past conduct/data
-- retroactive_changes: specifically applies to data already collected or conduct already occurred (not prospective-only)
-- cancellation_friction: no prorated refunds, requiring phone/chat to cancel when signup was digital, early termination fees, or waiting periods before cancellation effective
-- fee_modification: unilateral price increases with <30 days notice, "grandfathering" expiration without specific warning, automatic tier upgrades upon usage thresholds without per-instance confirmation
+# New semantic-only IDs from the model: lowercase, underscores, 3–64 chars, no double underscores.
+_DYNAMIC_CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 
-NEW HIGH-RISK CATEGORIES (commonly hidden):
-- gag_clauses: prohibitions on negative reviews, disparagement, public criticism, or requiring removal of content/social media posts; "non-disparagement" obligations
-- unilateral_interpretation: "we retain exclusive right to interpret these terms," "terms mean what we say they mean," or reserving sole discretion to determine breach/compliance
-- liquidated_damages_penalties: predetermined monetary penalties for breach that are grossly disproportionate (e.g., $500 per infraction) functioning as punishment rather than estimate of actual damages
-- one_way_attorneys_fees: prevailing party provision where ONLY provider can recover fees, or asymmetrical recovery (provider gets fees in broader circumstances than user)
-- no_injunctive_relief: user cannot seek injunctions, restraining orders, or specific performance to stop ongoing harm (must settle for money damages after the fact)
-- mandatory_delay_tactics: must engage in mediation/negotiation for 30-90 days before filing suit, or informal dispute resolution requirements designed to exhaust patience/statute of limitations
-- perpetual_restraint: non-compete, non-solicit, non-disparagement, or confidentiality obligations surviving termination indefinitely (no time limit), or applying to former customers/employees broadly
-- no_assignment_by_user: user cannot assign/transfer rights under contract, but provider can assign freely to any third party (including debt collectors/data brokers)
-- overbroad_ip_restrictions: prohibition on reverse engineering even for security research/interoperability where legally permitted; claiming ownership of user modifications/derivatives of open-source components
-- device_exploitation: claiming right to use user's device processing power (cryptomining), bandwidth (P2P networking), or storage for provider's benefit beyond core service delivery
-- shadow_profiling: collecting data on non-users (contacts, "friends," site visitors without accounts) or supplementing profiles with third-party data broker information
-- waiver_of_statutory_rights: disclaiming rights under specific consumer protection laws (CCPA opt-out, GDPR rights, Magnuson-Moss warranty rights, right to repair)
-- english_language_supremacy: only English version binding despite offering translations, or user waives right to rely on local language version (problematic in EU/jurisdictions with language rights)
-- survival_of_termination_vague: "survival necessary provisions" without specificity, allowing provider to later claim indefinite survival of advantageous clauses (payment, IP, confidentiality) while claiming expiration of obligations
-- limitation_of_liability: caps on total liability, exclusion of consequential/indirect/punitive damages, or broad "not liable" carve-outs
-- disclaimer_of_warranties: "as is," "as available," disclaimer of implied warranties/merchantability/fitness
-- broad_indemnity: user must indemnify, defend, or hold harmless provider (or reimburse fees/costs) for broad third-party claims
-- forum_selection_exclusive: exclusive jurisdiction/venue in specific courts or states/countries
-- discretionary_termination: suspend/terminate accounts or service at sole discretion, without notice/cause, or refuse service broadly
-- children_data_collection: under-13/children data practices, parental consent, or age restrictions
-- marketing_communications_burden: marketing/SMS/calls consent bundled with signup, or difficult/impossible opt-out from promotional messages
-- data_selling: explicit sale/monetization of personal data or personal information
-- private_message_monitoring: reading/scanning/monitoring private messages, inboxes, or direct communications
-- device_fingerprinting: hard-to-block tracking techniques like device fingerprinting, web beacons, clear gifs, or pixel tags
-- continuous_location_tracking: precise geolocation, GPS coordinates, or background location tracking
-- content_copyright_transfer: transfer/assignment of user copyright or exclusive ownership rights to provider
-- moral_rights_waiver: waiver/relinquishment of moral rights, attribution rights, or integrity rights in user works
-- shortened_limitation_period: aggressive time limits (often 1 year) for bringing legal claims
-- data_deletion_friction: retention after account deletion, indefinite backups, or no obligation to delete content
-- third_party_disclaimer: broad disclaimer for harms caused by third-party links, services, ads, or integrations
-- force_majeure_broad: overbroad force majeure clauses used to excuse outages/failures and avoid liability
-- ai_training_license: user data/content may be used to train or improve AI/ML/LLM systems
-- biometric_harvesting: collection/processing of biometric data (facial, voiceprint, retina, fingerprint)
-- off_platform_tracking: tracking beyond the service itself, including browser history, other apps, or key logging
-- inactivity_fee_seizure: dormant account fees, expiration/forfeiture of credits, balances, or tokens
-- no_refund_on_ban: account suspension/termination causes forfeiture of purchases/credits without refund
-- payment_method_updating: automatic updater programs fetch refreshed payment card details from issuer/network
-- beta_testing_waiver: beta/preview features carry broad "at your own risk" and liability waivers
-- notice_of_breach_delay: long breach-notice windows (e.g., 60/90/120 days) or vague delayed notice terms
-- consent_to_background_check: user consents to background/credit/criminal checks at provider discretion
 
-SEVERITY RULES:
-RED (immediate danger): arbitration/class waivers, zombie_renewal with no reminders, liquidated_damages_penalties >$500, gag_clauses prohibiting reviews, unilateral_interpretation, data_succession without consent, perpetual_restraint, waiver_of_statutory_rights (GDPR/CCPA), device_exploitation, explicit data_selling, private_message_monitoring, copyright transfer, moral_rights_waiver, shortened_limitation_period, ai_training_license, biometric_harvesting, off_platform_tracking, inactivity_fee_seizure, notice_of_breach_delay
-YELLOW (significant concern): auto_renewal with poor notice, cross_service_tracking, retroactive_changes, one_way_attorneys_fees, no_injunctive_relief, mandatory_delay_tactics, auto_upgrade_traps, device_fingerprinting, continuous_location_tracking, data_deletion_friction, third_party_disclaimer, force_majeure_broad, no_refund_on_ban, payment_method_updating, beta_testing_waiver, consent_to_background_check
+def normalize_llm_category(raw: str) -> str | None:
+    """
+    Return a normalized category key if the model output is allowed, else None.
 
-OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
-{"issues":[{"category":"exact_key_from_list","label":"Short Human Title","severity":"red"|"yellow","explanation":"Why this hurts consumers, in plain language. Mention specific unfairness mechanism.","confidence":0.0-1.0,"evidence_quote":"EXACT verbatim substring from input, max 400 chars, no paraphrasing"}]}
+    Either a known canonical key or a new snake_case identifier for clauses that
+    do not fit the fixed taxonomy (semantic / open-ended AI findings).
+    """
+    cat = (raw or "").strip().lower().replace(" ", "_")
+    if not cat:
+        return None
+    if cat in CANONICAL_CATEGORIES:
+        return cat
+    if "__" in cat or not _DYNAMIC_CATEGORY_RE.fullmatch(cat):
+        return None
+    return cat
 
-CONSTRAINTS:
-- Max 10 issues, ranked: RED severity first, then confidence, then consumer financial impact
-- evidence_quote MUST be verbatim. If clause spans non-contiguous sections or requires inference, SKIP the issue (do not paraphrase)
-- If clause uses synonyms (e.g., "eternal" vs "perpetual"), map to correct category but quote verbatim
-- For unilateral_changes vs retroactive_changes: use retroactive_changes ONLY if text explicitly states changes apply to past conduct/data; otherwise use unilateral_changes
-- For auto_renewal vs zombie_renewal: use zombie_renewal ONLY if text reveals deliberate dark pattern (no reminders, burying status) vs standard auto-renewal
-- If nothing applies: {"issues":[]}
-- No markdown code blocks, no trailing commas, valid JSON only
+def _build_category_table() -> str:
+    red = [c for c in CATEGORY_REGISTRY if c.severity == "red"]
+    yellow = [c for c in CATEGORY_REGISTRY if c.severity == "yellow"]
+    lines = ["RED categories (immediate danger):"]
+    for c in red:
+        lines.append(f"- {c.key}: {c.explanation}")
+    lines.append("\nYELLOW categories (significant concern):")
+    for c in yellow:
+        lines.append(f"- {c.key}: {c.explanation}")
+    return "\n".join(lines)
+
+
+SYSTEM_PROMPT = f"""You are FairTerms, a forensic contract analyzer. Identify consumer-harmful clauses.
+
+{_build_category_table()}
+
+SEMANTIC / OPEN-ENDED DETECTION (important):
+- Prefer a `category` from the lists above when it clearly fits.
+- When a clause is unfair or risky but does NOT match any key above, still report it: invent a short
+  snake_case `category` (lowercase letters, digits, underscores only; 3–64 chars; e.g. mandatory_insurance_bundle,
+  opaque_fee_stacking). Put the human-readable name in `label` and the reasoning in `explanation`.
+- Do not skip harmful language just because it is not in the fixed list—that is the main job of the AI pass.
+
+OUTPUT (strict JSON, no markdown):
+{{"issues":[{{"category":"key_from_list_or_new_snake_case","label":"Short Title","severity":"red"|"yellow","explanation":"Why harmful, plain language.","confidence":0.0-1.0,"evidence_quote":"EXACT verbatim substring, max 400 chars"}}]}}
+
+RULES:
+- Return ALL matching issues, RED first, then confidence, then financial impact.
+- evidence_quote MUST be verbatim from input. If quote spans non-contiguous text, SKIP.
+- retroactive_changes only if text explicitly covers past data/conduct; else unilateral_changes.
+- zombie_renewal only for deliberate dark patterns (no reminders, buried settings); else auto_renewal.
+- If nothing applies: {{"issues":[]}}
+- Valid JSON only, no trailing commas.
 """
+
+
+def _explanation_language_directive() -> str:
+    mode = os.environ.get("FAIRTERMS_EXPLANATION_LANGUAGE", "same_as_input").strip().lower()
+    if mode in ("en", "english"):
+        return (
+            "Write `label` and `explanation` in clear English even when `evidence_quote` is in another language."
+        )
+    return (
+        "Write `label` and `explanation` in the same language as the quoted clause "
+        "(the dominant language of that snippet)."
+    )
+
+
+def build_system_prompt() -> str:
+    return (
+        SYSTEM_PROMPT
+        + "\n\nMULTILINGUAL ANALYSIS:\n"
+        "- The contract may be in ANY human language (including mixed languages).\n"
+        "- FairTerms targets global ToS: treat English, Chinese, Spanish, Hindi, Arabic, French, Portuguese, "
+        "Russian, Urdu, Bengali, German, Japanese, Korean, Turkish, Indonesian, Vietnamese, Italian, Dutch, "
+        "Polish, Thai, Swahili, Persian, Malay, Filipino/Tagalog, and Ukrainian the same as any other language.\n"
+        "- `category`: use a key from the lists above when it fits; otherwise a new concise snake_case id "
+        "(lowercase, underscores, 3–64 chars) for risks that have no listed key.\n"
+        "- `evidence_quote` MUST be copied verbatim from the input (exact substring; same script, spelling, punctuation).\n"
+        "- "
+        + _explanation_language_directive()
+        + "\n- Do not translate `evidence_quote`. Do not invent text not present in the input.\n"
+    )
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -209,6 +168,19 @@ def _evidence_in_excerpt(quote: str, excerpt: str) -> str | None:
     return None
 
 
+def _groq_payload_too_large(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    if getattr(exc, "status_code", None) == 413:
+        return True
+    if "413" in str(exc):
+        return True
+    if "too large" in msg or "reduce your message" in msg:
+        return True
+    if "rate_limit_exceeded" in msg and ("token" in msg or "tpm" in msg):
+        return True
+    return False
+
+
 def analyze_with_groq(text: str) -> list[dict[str, Any]] | None:
     api_key = os.environ.get("GROQ_API_KEY", "").strip()
     if not api_key:
@@ -222,7 +194,9 @@ def analyze_with_groq(text: str) -> list[dict[str, Any]] | None:
         return None
 
     model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-    excerpt = _truncate(text, int(os.environ.get("GROQ_MAX_INPUT_CHARS", "14000")))
+    max_chars = int(os.environ.get("GROQ_MAX_INPUT_CHARS", "9000"))
+    excerpt = _truncate(text, max_chars)
+    excerpt_for_validation = excerpt
 
     logger.info(
         "Groq: request model=%s excerpt_chars=%s input_chars=%s",
@@ -232,24 +206,43 @@ def analyze_with_groq(text: str) -> list[dict[str, Any]] | None:
     )
 
     client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key)
+    system_prompt = build_system_prompt()
 
-    try:
-        completion = client.chat.completions.create(
+    def _create(user_excerpt: str):
+        return client.chat.completions.create(
             model=model,
             temperature=0.15,
-            max_tokens=2048,
+            max_tokens=1536,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"Analyze this terms/policy text:\n\n{excerpt}",
+                    "content": f"Analyze this terms/policy text:\n\n{user_excerpt}",
                 },
             ],
         )
+
+    try:
+        completion = _create(excerpt)
     except Exception as exc:
-        logger.exception("Groq: API request failed: %s", exc)
-        return None
+        if _groq_payload_too_large(exc) and len(excerpt) > 4800:
+            retry_cap = max(4500, len(excerpt) // 2)
+            excerpt = _truncate(text, retry_cap)
+            excerpt_for_validation = excerpt
+            logger.warning(
+                "Groq: payload/rate limit error (%s), retry excerpt_chars=%s",
+                type(exc).__name__,
+                len(excerpt),
+            )
+            try:
+                completion = _create(excerpt)
+            except Exception as exc2:
+                logger.exception("Groq: retry failed: %s", exc2)
+                return None
+        else:
+            logger.exception("Groq: API request failed: %s", exc)
+            return None
 
     raw = completion.choices[0].message.content or "{}"
     finish = getattr(completion.choices[0], "finish_reason", None)
@@ -295,13 +288,13 @@ def analyze_with_groq(text: str) -> list[dict[str, Any]] | None:
 
     out: list[dict[str, Any]] = []
     skipped: list[str] = []
-    for item in issues_raw[:10]:
+    for item in issues_raw:
         if not isinstance(item, dict):
             skipped.append("non-dict item")
             continue
-        cat = str(item.get("category", "")).strip()
-        if cat not in ALLOWED_CATEGORIES:
-            skipped.append(f"bad category={cat!r}")
+        cat = normalize_llm_category(str(item.get("category", "")))
+        if not cat:
+            skipped.append(f"bad category={item.get('category')!r}")
             continue
         sev = str(item.get("severity", "")).strip().lower()
         if sev not in ("red", "yellow"):
@@ -310,7 +303,7 @@ def analyze_with_groq(text: str) -> list[dict[str, Any]] | None:
         label = str(item.get("label", "")).strip() or cat.replace("_", " ").title()
         expl = str(item.get("explanation", "")).strip()
         quote_raw = str(item.get("evidence_quote", "")).strip()
-        quote = _evidence_in_excerpt(quote_raw, excerpt)
+        quote = _evidence_in_excerpt(quote_raw, excerpt_for_validation)
         if not quote:
             skipped.append(f"quote not in excerpt cat={cat} quote_len={len(quote_raw)}")
             continue

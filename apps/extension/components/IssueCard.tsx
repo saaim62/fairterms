@@ -1,4 +1,5 @@
 import type { RiskIssue } from "../../../packages/shared-types"
+import { tr } from "../lib/uiStrings"
 import { theme } from "../styles/theme"
 
 interface IssueCardProps {
@@ -30,7 +31,7 @@ export const IssueCard = ({ issue, onShowOnPage }: IssueCardProps) => (
         borderRadius: 4,
         letterSpacing: "0.02em"
       }}>
-        {issue.severity === "red" ? "Critical Risk" : "Warning"}
+        {issue.severity === "red" ? tr("criticalRisk") : tr("warning")}
       </span>
     </div>
     <strong style={{ 
@@ -79,7 +80,7 @@ export const IssueCard = ({ issue, onShowOnPage }: IssueCardProps) => (
         cursor: "pointer",
         transition: "all 0.2s ease"
       }}>
-      Locate in Document
+      {tr("locateInDoc")}
     </button>
   </div>
 )

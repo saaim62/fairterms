@@ -2,9 +2,46 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from services.category_registry import ALL_CATEGORY_KEYS, get_explanation, get_label, get_severity
 from services.groq_analyze import analyze_with_groq
+from services.language_detect import detect_document_language
+from services.locale_patterns import LOCALE_EXTRA_PATTERNS, LOCALE_PATTERN_LANGUAGES
+from services.script_locale_hints import script_locale_hints
+
+
+_UK_CHARS = frozenset("іїєґІЇЄҐ")
+_RU_CHARS = frozenset("ыэёъЫЭЁЪ")
+_FA_CHARS = frozenset("پچژگ")
+
+
+def _refine_document_language_from_script(safe_text: str, extra_locales: list[str]) -> str | None:
+    """
+    When several script-derived locales apply (ru+uk, ar+fa+ur), pick a likelier label for
+    API consumers. Pattern banks for all hinted locales still run unchanged.
+    """
+    if not safe_text or not extra_locales:
+        return None
+    ls = frozenset(extra_locales)
+    if ls >= frozenset({"ru", "uk"}):
+        uk_marks = ru_marks = 0
+        for c in safe_text:
+            if c in _UK_CHARS:
+                uk_marks += 1
+            elif c in _RU_CHARS:
+                ru_marks += 1
+        if uk_marks >= 2 and uk_marks >= ru_marks:
+            return "uk"
+        if ru_marks >= 2 and ru_marks > uk_marks:
+            return "ru"
+        return None
+    if ls >= frozenset({"ar", "fa", "ur"}):
+        fa_marks = sum(1 for c in safe_text if c in _FA_CHARS)
+        if fa_marks >= 2:
+            return "fa"
+        return None
+    return None
 
 
 @dataclass
@@ -14,15 +51,15 @@ class Rule:
     severity: str
     explanation: str
     patterns: list[str]
+    compiled: list[re.Pattern[str]] = field(default_factory=list, repr=False)
 
 
-# Aligned with services.groq_analyze.SYSTEM_PROMPT categories and severity guidance.
 RULES: list[Rule] = [
     Rule(
         category="zombie_renewal",
-        label="Zombie Renewal / Hidden Auto-Renew",
-        severity="red",
-        explanation="Auto-renewal may be easy to miss, with weak or buried reminders.",
+        label=get_label("zombie_renewal"),
+        severity=get_severity("zombie_renewal"),
+        explanation=get_explanation("zombie_renewal"),
         patterns=[
             r"annual.{0,50}(subscription|renew).{0,80}(no|without).{0,30}(reminder|email|notice)",
             r"auto[- ]?renew.{0,100}(account|settings|profile|submenu)",
@@ -31,9 +68,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="auto_renewal",
-        label="Auto-Renewal Terms",
-        severity="yellow",
-        explanation="Billing may continue automatically; check notice and cancellation windows.",
+        label=get_label("auto_renewal"),
+        severity=get_severity("auto_renewal"),
+        explanation=get_explanation("auto_renewal"),
         patterns=[
             r"auto[- ]?renew",
             r"renews? automatically",
@@ -43,9 +80,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="arbitration_waiver",
-        label="Forced Arbitration / Class Waiver",
-        severity="red",
-        explanation="You may be waiving court, jury, or class-action rights.",
+        label=get_label("arbitration_waiver"),
+        severity=get_severity("arbitration_waiver"),
+        explanation=get_explanation("arbitration_waiver"),
         patterns=[
             r"binding arbitration",
             r"class action waiver",
@@ -55,9 +92,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="class_bar_standalone",
-        label="Class / Representative Action Bar",
-        severity="red",
-        explanation="Class or representative actions may be barred even apart from arbitration.",
+        label=get_label("class_bar_standalone"),
+        severity=get_severity("class_bar_standalone"),
+        explanation=get_explanation("class_bar_standalone"),
         patterns=[
             r"no class action",
             r"class action.{0,40}waiv",
@@ -67,9 +104,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="data_succession",
-        label="Data Transfer on Sale or Bankruptcy",
-        severity="red",
-        explanation="Your data may transfer to buyers or successors with little or no new consent.",
+        label=get_label("data_succession"),
+        severity=get_severity("data_succession"),
+        explanation=get_explanation("data_succession"),
         patterns=[
             r"successor.{0,60}(assign|transfer).{0,50}(data|information|personal)",
             r"merger.{0,50}(personal information|user data|your data)",
@@ -79,9 +116,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="gag_clauses",
-        label="Reviews / Non-Disparagement Restrictions",
-        severity="red",
-        explanation="Terms may restrict honest reviews, criticism, or public comment.",
+        label=get_label("gag_clauses"),
+        severity=get_severity("gag_clauses"),
+        explanation=get_explanation("gag_clauses"),
         patterns=[
             r"non[- ]disparag",
             r"negative review",
@@ -91,9 +128,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="unilateral_interpretation",
-        label="Provider-Only Interpretation",
-        severity="red",
-        explanation="The company may reserve sole power to interpret or enforce the agreement.",
+        label=get_label("unilateral_interpretation"),
+        severity=get_severity("unilateral_interpretation"),
+        explanation=get_explanation("unilateral_interpretation"),
         patterns=[
             r"sole discretion.{0,50}(interpret|determine|construe|enforce)",
             r"exclusive right.{0,40}interpret",
@@ -102,9 +139,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="liquidated_damages_penalties",
-        label="Liquidated Damages / Penalty Fees",
-        severity="red",
-        explanation="Fixed penalties per breach may be disproportionate and punitive.",
+        label=get_label("liquidated_damages_penalties"),
+        severity=get_severity("liquidated_damages_penalties"),
+        explanation=get_explanation("liquidated_damages_penalties"),
         patterns=[
             r"liquidated damages",
             r"\$\d+.{0,40}(per|each).{0,25}(infraction|violation|breach|instance)",
@@ -113,9 +150,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="perpetual_restraint",
-        label="Open-Ended Non-Compete / Survival",
-        severity="red",
-        explanation="Restrictive duties may survive termination without a clear time limit.",
+        label=get_label("perpetual_restraint"),
+        severity=get_severity("perpetual_restraint"),
+        explanation=get_explanation("perpetual_restraint"),
         patterns=[
             r"non[- ]compete.{0,60}(indefinite|perpetual|without limitation)",
             r"survive.{0,40}termination.{0,60}(indefinite|perpetual|forever)",
@@ -124,9 +161,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="waiver_of_statutory_rights",
-        label="Waiver of Statutory / Consumer Rights",
-        severity="red",
-        explanation="Language may try to waive rights under consumer or privacy laws.",
+        label=get_label("waiver_of_statutory_rights"),
+        severity=get_severity("waiver_of_statutory_rights"),
+        explanation=get_explanation("waiver_of_statutory_rights"),
         patterns=[
             r"waive.{0,40}(ccpa|gdpr|california consumer)",
             r"magnuson[- ]?moss",
@@ -135,9 +172,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="device_exploitation",
-        label="Device / Resource Exploitation",
-        severity="red",
-        explanation="The service may claim use of your device resources beyond core delivery.",
+        label=get_label("device_exploitation"),
+        severity=get_severity("device_exploitation"),
+        explanation=get_explanation("device_exploitation"),
         patterns=[
             r"crypto[- ]?min",
             r"processing power.{0,50}(device|your computer|your machine)",
@@ -146,9 +183,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="data_rights",
-        label="Broad Data / IP Rights",
-        severity="yellow",
-        explanation="Broad licenses or sharing rights over your data or content.",
+        label=get_label("data_rights"),
+        severity=get_severity("data_rights"),
+        explanation=get_explanation("data_rights"),
         patterns=[
             r"perpetual.{0,30}license",
             r"irrevocable.{0,30}license",
@@ -161,9 +198,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="cross_service_tracking",
-        label="Cross-Service Data Use",
-        severity="yellow",
-        explanation="Data from one product may be combined or reused across other services.",
+        label=get_label("cross_service_tracking"),
+        severity=get_severity("cross_service_tracking"),
+        explanation=get_explanation("cross_service_tracking"),
         patterns=[
             r"cross[- ]service",
             r"across (our |all )?(products|services|properties)",
@@ -172,9 +209,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="retroactive_changes",
-        label="Retroactive Policy Changes",
-        severity="yellow",
-        explanation="Changes may apply to data or conduct that already occurred.",
+        label=get_label("retroactive_changes"),
+        severity=get_severity("retroactive_changes"),
+        explanation=get_explanation("retroactive_changes"),
         patterns=[
             r"retroactive",
             r"prior conduct",
@@ -185,9 +222,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="unilateral_changes",
-        label="Unilateral Term Changes",
-        severity="yellow",
-        explanation="The provider can change terms; continued use may count as acceptance.",
+        label=get_label("unilateral_changes"),
+        severity=get_severity("unilateral_changes"),
+        explanation=get_explanation("unilateral_changes"),
         patterns=[
             r"(may|reserve the right to)\s+(modify|amend|change).{0,80}(terms|agreement|policy)",
             r"changes?\s+to\s+(the\s+)?(terms|agreement|policy)",
@@ -198,9 +235,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="fee_modification",
-        label="Price / Fee Changes",
-        severity="yellow",
-        explanation="Fees or prices may change with limited notice or automatic tier jumps.",
+        label=get_label("fee_modification"),
+        severity=get_severity("fee_modification"),
+        explanation=get_explanation("fee_modification"),
         patterns=[
             r"(price|fee|rate).{0,40}(change|increase).{0,60}(notice|prior)",
             r"(30|thirty)\s*days?.{0,40}(notice|prior).{0,40}(price|fee)",
@@ -211,9 +248,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="cancellation_friction",
-        label="Hard-to-Cancel Terms",
-        severity="yellow",
-        explanation="Cancellation or refunds may be harder than signup or unfair.",
+        label=get_label("cancellation_friction"),
+        severity=get_severity("cancellation_friction"),
+        explanation=get_explanation("cancellation_friction"),
         patterns=[
             r"non[- ]?refundable",
             r"no refunds",
@@ -226,9 +263,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="one_way_attorneys_fees",
-        label="One-Sided Attorneys' Fees",
-        severity="yellow",
-        explanation="Only the provider may recover legal fees if they prevail.",
+        label=get_label("one_way_attorneys_fees"),
+        severity=get_severity("one_way_attorneys_fees"),
+        explanation=get_explanation("one_way_attorneys_fees"),
         patterns=[
             r"attorneys?.{0,15}fees.{0,50}(we|us|our company|provider).{0,30}prevail",
             r"prevail.{0,40}(we|us).{0,30}attorneys",
@@ -237,9 +274,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="no_injunctive_relief",
-        label="No Injunctive / Equitable Relief",
-        severity="yellow",
-        explanation="You may be limited to money damages and unable to stop ongoing harm.",
+        label=get_label("no_injunctive_relief"),
+        severity=get_severity("no_injunctive_relief"),
+        explanation=get_explanation("no_injunctive_relief"),
         patterns=[
             r"no injunctive",
             r"waive.{0,30}injunction",
@@ -249,9 +286,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="mandatory_delay_tactics",
-        label="Mandatory Pre-Suit Delays",
-        severity="yellow",
-        explanation="You may have to wait through mediation or informal steps before suing.",
+        label=get_label("mandatory_delay_tactics"),
+        severity=get_severity("mandatory_delay_tactics"),
+        explanation=get_explanation("mandatory_delay_tactics"),
         patterns=[
             r"mediat(e|ion).{0,70}before.{0,40}(suit|litigation|court|file)",
             r"\d+\s*days?.{0,50}(mediat|negotiat|informal).{0,40}before.{0,30}(file|suit|court)",
@@ -259,9 +296,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="no_assignment_by_user",
-        label="Assignment: You Can't, They Can",
-        severity="yellow",
-        explanation="You may not assign the contract while the provider can assign freely.",
+        label=get_label("no_assignment_by_user"),
+        severity=get_severity("no_assignment_by_user"),
+        explanation=get_explanation("no_assignment_by_user"),
         patterns=[
             r"you (may not|cannot) assign.{0,120}(we|us).{0,40}may assign",
             r"non[- ]assignable.{0,80}without.{0,40}(our|written).{0,30}consent",
@@ -270,9 +307,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="overbroad_ip_restrictions",
-        label="Restrictive IP / Reverse Engineering",
-        severity="yellow",
-        explanation="Restrictions on reverse engineering or derivatives may be very broad.",
+        label=get_label("overbroad_ip_restrictions"),
+        severity=get_severity("overbroad_ip_restrictions"),
+        explanation=get_explanation("overbroad_ip_restrictions"),
         patterns=[
             r"reverse engineer",
             r"decompile",
@@ -282,9 +319,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="shadow_profiling",
-        label="Profiling Beyond Direct Users",
-        severity="yellow",
-        explanation="Data about non-users, contacts, or broker-augmented profiles may be collected.",
+        label=get_label("shadow_profiling"),
+        severity=get_severity("shadow_profiling"),
+        explanation=get_explanation("shadow_profiling"),
         patterns=[
             r"contacts?.{0,40}(information|data).{0,40}(collect|upload|import)",
             r"data broker",
@@ -294,9 +331,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="english_language_supremacy",
-        label="English-Only Binding Version",
-        severity="yellow",
-        explanation="Only the English version may be binding despite translations offered.",
+        label=get_label("english_language_supremacy"),
+        severity=get_severity("english_language_supremacy"),
+        explanation=get_explanation("english_language_supremacy"),
         patterns=[
             r"english (version|language).{0,50}(control|govern|prevail|authoritative)",
             r"translation.{0,50}(convenience|informational).{0,40}english",
@@ -304,9 +341,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="survival_of_termination_vague",
-        label="Vague Post-Termination Survival",
-        severity="yellow",
-        explanation="Vague 'surviving provisions' clauses can leave important terms open-ended.",
+        label=get_label("survival_of_termination_vague"),
+        severity=get_severity("survival_of_termination_vague"),
+        explanation=get_explanation("survival_of_termination_vague"),
         patterns=[
             r"surviv(e|es|ing).{0,30}termination.{0,50}(necessary|material|applicable|appropriate)",
             r"provisions?.{0,30}survive.{0,40}termination.{0,40}(include|such)",
@@ -314,9 +351,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="limitation_of_liability",
-        label="Cap on Damages / Liability Limits",
-        severity="yellow",
-        explanation="Damages may be capped or consequential losses excluded, limiting recovery.",
+        label=get_label("limitation_of_liability"),
+        severity=get_severity("limitation_of_liability"),
+        explanation=get_explanation("limitation_of_liability"),
         patterns=[
             r"limitation of liability",
             r"limit(ed|ing)?.{0,30}liability.{0,40}(aggregate|total|maximum)",
@@ -326,9 +363,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="disclaimer_of_warranties",
-        label="“As Is” / No Warranties",
-        severity="yellow",
-        explanation="The service may be offered without meaningful warranties or merchantability.",
+        label=get_label("disclaimer_of_warranties"),
+        severity=get_severity("disclaimer_of_warranties"),
+        explanation=get_explanation("disclaimer_of_warranties"),
         patterns=[
             r"as is\b",
             r"as[- ]available",
@@ -340,9 +377,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="broad_indemnity",
-        label="Broad Indemnification",
-        severity="yellow",
-        explanation="You may have to pay the provider’s losses, fees, or third-party claims.",
+        label=get_label("broad_indemnity"),
+        severity=get_severity("broad_indemnity"),
+        explanation=get_explanation("broad_indemnity"),
         patterns=[
             r"indemnif(y|ication).{0,40}(hold harmless|defend)",
             r"you (agree to |will )?indemnif",
@@ -351,9 +388,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="forum_selection_exclusive",
-        label="Exclusive Court / Venue",
-        severity="yellow",
-        explanation="Disputes may be forced into specific courts or jurisdictions far from you.",
+        label=get_label("forum_selection_exclusive"),
+        severity=get_severity("forum_selection_exclusive"),
+        explanation=get_explanation("forum_selection_exclusive"),
         patterns=[
             r"exclusive jurisdiction",
             r"exclusive venue",
@@ -364,9 +401,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="discretionary_termination",
-        label="Discretionary Suspension / Termination",
-        severity="yellow",
-        explanation="The provider may cut off access with broad or unclear discretion.",
+        label=get_label("discretionary_termination"),
+        severity=get_severity("discretionary_termination"),
+        explanation=get_explanation("discretionary_termination"),
         patterns=[
             r"(suspend|terminate).{0,40}(account|access|service).{0,50}(sole discretion|at any time|without (notice|cause|liability))",
             r"sole discretion.{0,40}(suspend|terminat|refuse service)",
@@ -375,9 +412,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="children_data_collection",
-        label="Children / Minors Data",
-        severity="yellow",
-        explanation="Terms may address under-13 or minor data in ways worth reviewing.",
+        label=get_label("children_data_collection"),
+        severity=get_severity("children_data_collection"),
+        explanation=get_explanation("children_data_collection"),
         patterns=[
             r"under (the age of )?13",
             r"children.{0,40}(personal information|data|privacy)",
@@ -388,9 +425,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="marketing_communications_burden",
-        label="Marketing / Communications Opt-Out",
-        severity="yellow",
-        explanation="Promotional messages or SMS may be hard to opt out of or bundled with service notices.",
+        label=get_label("marketing_communications_burden"),
+        severity=get_severity("marketing_communications_burden"),
+        explanation=get_explanation("marketing_communications_burden"),
         patterns=[
             r"marketing.{0,40}(email|message|text|sms|call)",
             r"promotional.{0,40}(communication|offer|material)",
@@ -400,9 +437,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="data_selling",
-        label="Explicit Sale of Personal Data",
-        severity="red",
-        explanation="The company may reserve the right to sell your personal information to third parties.",
+        label=get_label("data_selling"),
+        severity=get_severity("data_selling"),
+        explanation=get_explanation("data_selling"),
         patterns=[
             r"(sell|sale of).{0,40}(personal data|personal information|user data)",
             r"monetize.{0,40}(personal information|your data)",
@@ -410,9 +447,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="private_message_monitoring",
-        label="Monitoring of Private Messages",
-        severity="red",
-        explanation="The provider may read, scan, or monitor private/direct messages.",
+        label=get_label("private_message_monitoring"),
+        severity=get_severity("private_message_monitoring"),
+        explanation=get_explanation("private_message_monitoring"),
         patterns=[
             r"(read|monitor|scan|review).{0,50}(private message|direct message|dms|communications)",
             r"access.{0,30}(inbox|private content|direct message)",
@@ -420,9 +457,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="device_fingerprinting",
-        label="Advanced Device Tracking",
-        severity="yellow",
-        explanation="The service may use hard-to-block tracking methods like fingerprinting or tracking pixels.",
+        label=get_label("device_fingerprinting"),
+        severity=get_severity("device_fingerprinting"),
+        explanation=get_explanation("device_fingerprinting"),
         patterns=[
             r"device fingerprint",
             r"(web beacons|clear gifs|pixel tags)",
@@ -431,9 +468,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="continuous_location_tracking",
-        label="Precise / Continuous Location Tracking",
-        severity="yellow",
-        explanation="Terms may allow precise or background location tracking.",
+        label=get_label("continuous_location_tracking"),
+        severity=get_severity("continuous_location_tracking"),
+        explanation=get_explanation("continuous_location_tracking"),
         patterns=[
             r"(precise|exact|geolocation).{0,30}(data|tracking)",
             r"background.{0,40}location",
@@ -442,9 +479,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="content_copyright_transfer",
-        label="Copyright Surrender",
-        severity="red",
-        explanation="You may be transferring copyright or ownership rights in user content.",
+        label=get_label("content_copyright_transfer"),
+        severity=get_severity("content_copyright_transfer"),
+        explanation=get_explanation("content_copyright_transfer"),
         patterns=[
             r"(transfer|assign).{0,40}(copyright|intellectual property).{0,30}(to us|to company)",
             r"exclusive license.{0,40}(user content|your content)",
@@ -453,9 +490,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="moral_rights_waiver",
-        label="Waiver of Moral Rights",
-        severity="red",
-        explanation="You may waive moral rights, including attribution and integrity protections.",
+        label=get_label("moral_rights_waiver"),
+        severity=get_severity("moral_rights_waiver"),
+        explanation=get_explanation("moral_rights_waiver"),
         patterns=[
             r"waive.{0,30}moral rights",
             r"moral rights.{0,30}relinquish",
@@ -464,9 +501,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="shortened_limitation_period",
-        label="Shortened Statute of Limitations",
-        severity="red",
-        explanation="The legal time window to bring claims may be reduced (e.g., one year).",
+        label=get_label("shortened_limitation_period"),
+        severity=get_severity("shortened_limitation_period"),
+        explanation=get_explanation("shortened_limitation_period"),
         patterns=[
             r"(cause of action|claim).{0,60}must be (filed|commenced).{0,40}(within|no later than).{0,20}(one|1)\s*(year|yr)",
             r"permanently barred.{0,40}(one|1)\s*year",
@@ -475,9 +512,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="data_deletion_friction",
-        label="Data Retention / Deletion Friction",
-        severity="yellow",
-        explanation="Deleting an account may not remove data, backups, or retained records.",
+        label=get_label("data_deletion_friction"),
+        severity=get_severity("data_deletion_friction"),
+        explanation=get_explanation("data_deletion_friction"),
         patterns=[
             r"retain.{0,50}after (deletion|termination|cancellation)",
             r"backup copies.{0,40}(indefinitely|perpetually|commercial reasons)",
@@ -486,9 +523,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="third_party_disclaimer",
-        label="Third-Party Harm Disclaimer",
-        severity="yellow",
-        explanation="The service may disclaim responsibility for third-party links, ads, or integrations.",
+        label=get_label("third_party_disclaimer"),
+        severity=get_severity("third_party_disclaimer"),
+        explanation=get_explanation("third_party_disclaimer"),
         patterns=[
             r"not responsible.{0,40}third[- ]party (links|websites|content|ads)",
             r"no control over.{0,40}third[- ]party",
@@ -497,9 +534,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="force_majeure_broad",
-        label="Overbroad Force Majeure",
-        severity="yellow",
-        explanation="Broad force majeure language may excuse provider failures too easily.",
+        label=get_label("force_majeure_broad"),
+        severity=get_severity("force_majeure_broad"),
+        explanation=get_explanation("force_majeure_broad"),
         patterns=[
             r"force majeure",
             r"acts of god.{0,60}not liable",
@@ -508,9 +545,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="ai_training_license",
-        label="AI / Machine Learning Training",
-        severity="red",
-        explanation="Your data or content may be used to train AI models without explicit opt-in.",
+        label=get_label("ai_training_license"),
+        severity=get_severity("ai_training_license"),
+        explanation=get_explanation("ai_training_license"),
         patterns=[
             r"(train|develop|improve).{0,50}(artificial intelligence|ai model|machine learning|llm|generative)",
             r"use (your )?content.{0,40}(training data|neural network|algorithmic)",
@@ -518,9 +555,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="biometric_harvesting",
-        label="Biometric Data Collection",
-        severity="red",
-        explanation="Terms may allow collection or processing of sensitive biometric identifiers.",
+        label=get_label("biometric_harvesting"),
+        severity=get_severity("biometric_harvesting"),
+        explanation=get_explanation("biometric_harvesting"),
         patterns=[
             r"biometric (data|information)",
             r"(facial recognition|voiceprint|retina scan|fingerprint).{0,40}(collect|store|process)",
@@ -529,9 +566,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="off_platform_tracking",
-        label="Off-Platform / Browser Monitoring",
-        severity="red",
-        explanation="The service may monitor activity beyond its own app or website.",
+        label=get_label("off_platform_tracking"),
+        severity=get_severity("off_platform_tracking"),
+        explanation=get_explanation("off_platform_tracking"),
         patterns=[
             r"(browser|browsing) history.{0,40}(collect|monitor|access|track)",
             r"track(ing)?.{0,50}(other applications|outside the service|third[- ]party websites)",
@@ -540,9 +577,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="inactivity_fee_seizure",
-        label="Inactivity Fees / Asset Seizure",
-        severity="red",
-        explanation="Dormant accounts may incur fees or lose balances/credits over time.",
+        label=get_label("inactivity_fee_seizure"),
+        severity=get_severity("inactivity_fee_seizure"),
+        explanation=get_explanation("inactivity_fee_seizure"),
         patterns=[
             r"inactivity fee",
             r"(dormant|inactive) account.{0,50}(fee|charge|forfeit|expire)",
@@ -551,9 +588,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="no_refund_on_ban",
-        label="Forfeiture of Purchases on Ban",
-        severity="yellow",
-        explanation="Account suspension/termination may forfeit purchases or wallet balances without refund.",
+        label=get_label("no_refund_on_ban"),
+        severity=get_severity("no_refund_on_ban"),
+        explanation=get_explanation("no_refund_on_ban"),
         patterns=[
             r"terminate.{0,50}without (refund|compensation)",
             r"forfeit.{0,50}(purchases|credits|wallet|balance|virtual).{0,40}(upon termination|suspended)",
@@ -562,9 +599,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="payment_method_updating",
-        label="Automatic Payment Method Updates",
-        severity="yellow",
-        explanation="Payment credentials may be auto-updated via card networks or banks.",
+        label=get_label("payment_method_updating"),
+        severity=get_severity("payment_method_updating"),
+        explanation=get_explanation("payment_method_updating"),
         patterns=[
             r"(obtain|receive|fetch).{0,40}updated (credit card|payment).{0,40}(bank|issuer)",
             r"account updater (service|program)",
@@ -573,9 +610,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="beta_testing_waiver",
-        label="Beta / Experimental Feature Immunity",
-        severity="yellow",
-        explanation="Experimental features may be offered with broad liability disclaimers.",
+        label=get_label("beta_testing_waiver"),
+        severity=get_severity("beta_testing_waiver"),
+        explanation=get_explanation("beta_testing_waiver"),
         patterns=[
             r"(beta|experimental|preview) (features|services).{0,60}(at your own risk|no warranty|disclaim all liability)",
             r"pre[- ]release software.{0,50}as is",
@@ -583,9 +620,9 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="notice_of_breach_delay",
-        label="Delayed Breach Notification",
-        severity="red",
-        explanation="Terms may allow unusually delayed notice after security incidents.",
+        label=get_label("notice_of_breach_delay"),
+        severity=get_severity("notice_of_breach_delay"),
+        explanation=get_explanation("notice_of_breach_delay"),
         patterns=[
             r"notify you.{0,40}within (60|90|120)\s*days.{0,40}(breach|unauthorized access)",
             r"commercially reasonable time.{0,40}notify.{0,40}breach",
@@ -593,15 +630,40 @@ RULES: list[Rule] = [
     ),
     Rule(
         category="consent_to_background_check",
-        label="Hidden Background Checks",
-        severity="yellow",
-        explanation="Terms may permit background, credit, or criminal checks at provider discretion.",
+        label=get_label("consent_to_background_check"),
+        severity=get_severity("consent_to_background_check"),
+        explanation=get_explanation("consent_to_background_check"),
         patterns=[
             r"consent to.{0,40}(background check|credit check|criminal history)",
             r"reserve the right to (conduct|run).{0,40}background",
         ],
     ),
 ]
+
+
+def _compile_all_rules() -> None:
+    for rule in RULES:
+        rule.compiled = [re.compile(p) for p in rule.patterns]
+
+
+_compile_all_rules()
+
+_LOCALE_PATTERN_CACHE: dict[str, dict[str, list[re.Pattern[str]]]] = {}
+
+
+def _get_compiled_locale_patterns(category: str, locale: str) -> list[re.Pattern[str]]:
+    key = f"{category}:{locale}"
+    if key not in _LOCALE_PATTERN_CACHE:
+        raw = LOCALE_EXTRA_PATTERNS.get(category, {}).get(locale, [])
+        _LOCALE_PATTERN_CACHE[key] = [re.compile(p) for p in raw]
+    return _LOCALE_PATTERN_CACHE[key]
+
+
+def _compiled_patterns_for_rule(rule: Rule, extra_locales: list[str]) -> list[re.Pattern[str]]:
+    combined = list(rule.compiled)
+    for loc in extra_locales:
+        combined.extend(_get_compiled_locale_patterns(rule.category, loc))
+    return combined
 
 
 def _pick_signal(issues: list[dict]) -> str:
@@ -614,7 +676,6 @@ def _pick_signal(issues: list[dict]) -> str:
 
 
 def _severity_sort_key(issue: dict) -> tuple[int, float, str]:
-    """Red first, then yellow; higher confidence first; stable label tie-break."""
     sev = str(issue.get("severity", "")).lower()
     rank = 0 if sev == "red" else 1 if sev == "yellow" else 2
     try:
@@ -629,37 +690,97 @@ def _sort_issues_by_severity(issues: list[dict]) -> list[dict]:
     return sorted(issues, key=_severity_sort_key)
 
 
-def _merge_issues(rule_issues: list[dict], groq_issues: list[dict] | None) -> list[dict]:
-    """Prefer rule-based hit per category; add Groq-only categories."""
-    by_cat: dict[str, dict] = {}
-    for issue in rule_issues:
-        by_cat[issue["category"]] = issue
+def _resolve_rule_locales(safe_text: str, detected: str | None) -> tuple[list[str], str | None]:
+    """
+    Extra locale pattern banks to merge (English Rule.patterns always apply).
+    Script hints cover CJK, Hangul, Thai, Devanagari, Bengali, Arabic→ar/fa/ur, Cyrillic→ru/uk.
+    Latin locales use detect_document_language.
+    """
+    forced = os.environ.get("FAIRTERMS_RULE_LOCALES", "").strip().lower()
+    if forced:
+        out: list[str] = []
+        for part in forced.split(","):
+            p = part.strip()
+            if p in LOCALE_PATTERN_LANGUAGES and p not in out:
+                out.append(p)
+        doc_lang = detected if detected else (out[0] if out else None)
+        return out, doc_lang
 
+    out: list[str] = []
+    if detected and detected in LOCALE_PATTERN_LANGUAGES:
+        out.append(detected)
+
+    use_script = os.environ.get("FAIRTERMS_SCRIPT_LOCALE_HINT", "1").strip().lower() in (
+        "1", "true", "yes", "",
+    )
+    if use_script:
+        for loc in script_locale_hints(safe_text):
+            if loc in LOCALE_PATTERN_LANGUAGES and loc not in out:
+                out.append(loc)
+
+    doc_lang = detected if detected else (out[0] if out else None)
+    if not detected and out:
+        refined = _refine_document_language_from_script(safe_text, out)
+        if refined:
+            doc_lang = refined
+    return out, doc_lang
+
+
+def _merge_issues(rule_issues: list[dict], groq_issues: list[dict] | None) -> list[dict]:
+    """
+    Rules win for canonical categories. Groq fills canonical gaps. Semantic-only LLM categories
+    (snake_case keys not in ALL_CATEGORY_KEYS) are merged separately so multiple distinct findings stay.
+    """
+    by_cat: dict[str, dict] = {issue["category"]: issue for issue in rule_issues}
     if not groq_issues:
         return list(by_cat.values())
 
+    groq_canonical_added: set[str] = set()
+    semantic: list[dict] = []
+    seen_semantic: set[tuple[str, str]] = set()
+
     for g in groq_issues:
         cat = g.get("category")
-        if not cat or cat in by_cat:
+        if not cat:
             continue
-        by_cat[cat] = g
+        quote_key = ((g.get("evidence_quote") or "").strip())[:160]
 
-    return list(by_cat.values())
+        if cat in ALL_CATEGORY_KEYS:
+            if cat in by_cat:
+                continue
+            if cat in groq_canonical_added:
+                continue
+            groq_canonical_added.add(cat)
+            by_cat[cat] = g
+            continue
+
+        dedup = (str(cat), quote_key)
+        if dedup in seen_semantic:
+            continue
+        seen_semantic.add(dedup)
+        semantic.append(g)
+
+    return list(by_cat.values()) + semantic
 
 
 def analyze_contract_text(text: str, source_url: str | None = None) -> dict:
     safe_text = (text or "").strip()
     lowered = safe_text.lower()
 
+    use_detect = os.environ.get("FAIRTERMS_DETECT_LANGUAGE", "1").strip().lower() in (
+        "1", "true", "yes", "",
+    )
+    detected: str | None = detect_document_language(safe_text) if use_detect else None
+    extra_locales, document_language = _resolve_rule_locales(safe_text, detected)
+    rule_locales_used = ["en"] + extra_locales
+
     issues: list[dict] = []
     for rule in RULES:
-        for pattern in rule.patterns:
-            match = re.search(pattern, lowered)
+        for compiled_pat in _compiled_patterns_for_rule(rule, extra_locales):
+            match = compiled_pat.search(lowered)
             if not match:
                 continue
-
             evidence_quote = _extract_sentence_context(safe_text, match.start(), match.end())
-
             issues.append(
                 {
                     "category": rule.category,
@@ -687,12 +808,13 @@ def analyze_contract_text(text: str, source_url: str | None = None) -> dict:
         "issue_count": len(issues),
         "issues": issues,
         "analysis_source": analysis_source,
+        "document_language": document_language,
+        "rule_locales_used": rule_locales_used,
         "disclaimer": "FairTerms provides informational risk signals, not legal advice.",
     }
 
 
 def _is_decimal_separator_dot(text: str, i: int) -> bool:
-    """True if '.' at i is part of a number like 1.5, 2.1, $3.99 (digit on both sides)."""
     if i < 0 or i >= len(text) or text[i] != ".":
         return False
     before = text[i - 1] if i > 0 else ""
@@ -729,15 +851,19 @@ def _extract_sentence_context(text: str, start_idx: int, end_idx: int) -> str:
         return ""
 
     left_period = _rfind_sentence_period(text, start_idx)
+    left_cjk = text.rfind("\u3002", 0, start_idx)
     left_bound = max(
-        left_period,
+        left_period, left_cjk,
         text.rfind("\n", 0, start_idx),
         text.rfind(";", 0, start_idx),
     )
     right_period = _find_sentence_period(text, end_idx)
+    right_cjk = text.find("\u3002", end_idx)
     right_newline = text.find("\n", end_idx)
     right_semicolon = text.find(";", end_idx)
-    candidates = [idx for idx in (right_period, right_newline, right_semicolon) if idx != -1]
+    candidates = [
+        idx for idx in (right_period, right_cjk, right_newline, right_semicolon) if idx != -1
+    ]
     right_bound = min(candidates) if candidates else len(text)
 
     slice_start = 0 if left_bound == -1 else left_bound + 1
@@ -749,4 +875,3 @@ def _extract_sentence_context(text: str, start_idx: int, end_idx: int) -> str:
 
     focused = text[max(0, start_idx - 90) : min(len(text), end_idx + 180)].strip()
     return re.sub(r"\s+", " ", focused)
-

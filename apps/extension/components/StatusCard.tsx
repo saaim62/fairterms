@@ -1,4 +1,5 @@
 import type { RiskSeverity } from "../../../packages/shared-types"
+import { tr } from "../lib/uiStrings"
 import { theme } from "../styles/theme"
 
 interface StatusCardProps {
@@ -26,7 +27,7 @@ export const StatusCard = ({ signal, label }: StatusCardProps) => (
       alignItems: "center",
       justifyContent: "space-between"
     }}>
-    <span style={{ color: theme.textMuted, fontSize: 13, fontWeight: 500 }}>Safety Rating</span>
+    <span style={{ color: theme.textMuted, fontSize: 13, fontWeight: 500 }}>{tr("safetyRating")}</span>
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <div style={{ 
         width: 8, 

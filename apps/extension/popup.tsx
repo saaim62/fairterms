@@ -5,10 +5,22 @@ import { IssueCard } from "./components/IssueCard"
 import { PopupHeader } from "./components/PopupHeader"
 import { StatusCard } from "./components/StatusCard"
 import { extractTabTextForAnalyze } from "./lib/extractPageText"
+import { tr } from "./lib/uiStrings"
 import { theme } from "./styles/theme"
+import { RED_CATEGORY_KEYS, CATEGORY_HINTS } from "./lib/categoryMeta"
 import type { AnalyzeResponse, RiskIssue } from "../../packages/shared-types"
 
-const API_URL = "http://localhost:8000/analyze"
+const DEFAULT_API_URL = "http://localhost:8000"
+
+async function getApiUrl(): Promise<string> {
+  try {
+    const result = await chrome.storage.sync.get({ apiUrl: DEFAULT_API_URL })
+    return (result.apiUrl || DEFAULT_API_URL).replace(/\/+$/, "")
+  } catch {
+    return DEFAULT_API_URL
+  }
+}
+
 
 /** Strip LLM/UI wrapping quotes so matching uses the same text as the page. */
 function cleanEvidenceForLocate(raw: string): string {
@@ -40,12 +52,12 @@ function IndexPopup() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null)
 
   const signalLabel = useMemo(() => {
-    if (!result) return "Awaiting Scan"
+    if (!result) return tr("awaitingScan")
     return result.signal === "red"
-      ? "High Risk"
+      ? tr("highRisk")
       : result.signal === "yellow"
-        ? "Caution"
-        : "Secure"
+        ? tr("caution")
+        : tr("secure")
   }, [result])
 
   const issuesSorted = useMemo(() => {
@@ -66,18 +78,17 @@ function IndexPopup() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) {
-        throw new Error("No active tab found")
+        throw new Error(tr("noTab"))
       }
 
       const extractedText = await extractTabTextForAnalyze(tab.id, tab.url)
 
       if (!extractedText.trim()) {
-        throw new Error(
-          "No readable text found. For PDFs: enable “Allow access to file URLs” in chrome://extensions for local files, and note some scanned/image-only PDFs do not contain selectable text."
-        )
+        throw new Error(tr("noReadableText"))
       }
 
-      const response = await fetch(API_URL, {
+      const apiBase = await getApiUrl()
+      const response = await fetch(`${apiBase}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -87,7 +98,7 @@ function IndexPopup() {
       })
 
       if (!response.ok) {
-        throw new Error(`API Connection Failed`)
+        throw new Error(tr("apiFailed"))
       }
 
       const json = (await response.json()) as AnalyzeResponse
@@ -108,394 +119,45 @@ function IndexPopup() {
 
       const cleanedQuote = cleanEvidenceForLocate(issue.evidence_quote)
 
+      const redCatArray = Array.from(RED_CATEGORY_KEYS)
+      const hintsObj = CATEGORY_HINTS
       const locateScript = {
         target: { tabId: tab.id },
-        args: [cleanedQuote, issue.label, issue.category],
-        func: (evidenceQuote: string, label: string, category: string) => {
-          const HIGHLIGHT_ATTR = "data-fairterms-highlight"
-          const previous = document.querySelectorAll(`mark[${HIGHLIGHT_ATTR}]`)
-          previous.forEach((el) => {
-            const parent = el.parentNode
-            if (!parent) return
-            const text = document.createTextNode(el.textContent || "")
-            parent.replaceChild(text, el)
-            parent.normalize()
-          })
-
-          const stripOuterQuotes = (s: string) => {
-            let t = (s || "").trim()
-            for (;;) {
-              let ch = false
-              if (
-                (t.startsWith('"') && t.endsWith('"')) ||
-                (t.startsWith("'") && t.endsWith("'"))
-              ) {
-                t = t.slice(1, -1).trim()
-                ch = true
-              } else if (t.startsWith("\u201c") && t.endsWith("\u201d")) {
-                t = t.slice(1, -1).trim()
-                ch = true
-              } else if (t.startsWith("\u2018") && t.endsWith("\u2019")) {
-                t = t.slice(1, -1).trim()
-                ch = true
-              }
-              if (!ch) break
-            }
-            return t
-          }
-
-          const canonicalChar = (ch: string) => {
-            if (ch === "\u201c" || ch === "\u201d" || ch === "\u201e" || ch === "\u201f") return '"'
-            if (ch === "\u2018" || ch === "\u2019" || ch === "\u201a" || ch === "\u201b") return "'"
-            if (ch === "\u2013" || ch === "\u2014") return "-"
-            return ch
-          }
-
-          const normalizeWithMap = (raw: string) => {
-            let out = ""
-            const map: number[] = []
-            let prevSpace = true
-            for (let i = 0; i < raw.length; i += 1) {
-              const c = canonicalChar(raw[i]).toLowerCase()
-              const isSpace = /\s/.test(c)
-              if (isSpace) {
-                if (!prevSpace) {
-                  out += " "
-                  map.push(i)
-                  prevSpace = true
-                }
-              } else {
-                out += c
-                map.push(i)
-                prevSpace = false
-              }
-            }
-            while (out.endsWith(" ")) {
-              out = out.slice(0, -1)
-              map.pop()
-            }
-            return { text: out, map }
-          }
-
-          const core = stripOuterQuotes(evidenceQuote)
-          if (!core) return false
-
-          const redCategories = new Set([
-            "zombie_renewal",
-            "arbitration_waiver",
-            "class_bar_standalone",
-            "data_succession",
-            "gag_clauses",
-            "unilateral_interpretation",
-            "liquidated_damages_penalties",
-            "perpetual_restraint",
-            "waiver_of_statutory_rights",
-            "device_exploitation",
-            "data_selling",
-            "private_message_monitoring",
-            "content_copyright_transfer",
-            "moral_rights_waiver",
-            "shortened_limitation_period",
-            "ai_training_license",
-            "biometric_harvesting",
-            "off_platform_tracking",
-            "inactivity_fee_seizure",
-            "notice_of_breach_delay"
-          ])
-          const highlightColor =
-            label.toLowerCase().includes("safe") || category === "safe"
-              ? "#22C55E"
-              : redCategories.has(category)
-                ? "#EF4444"
-                : "#F59E0B"
-
-          const isDecimalDot = (s: string, i: number) => {
-            if (i < 0 || i >= s.length || s[i] !== ".") return false
-            const prev = i > 0 ? s[i - 1] : ""
-            const next = i + 1 < s.length ? s[i + 1] : ""
-            return /\d/.test(prev) && /\d/.test(next)
-          }
-
-          const firstClauseBeforeNonDecimalPeriod = (s: string) => {
-            for (let i = 0; i < s.length; i += 1) {
-              if (s[i] !== ".") continue
-              if (isDecimalDot(s, i)) continue
-              const slice = s.slice(0, i).trim()
-              if (slice.length >= 18) return slice
-            }
-            return ""
-          }
-
-          const expandOffsetsToFullLine = (text: string, start: number, end: number) => {
-            const lineStart = text.lastIndexOf("\n", Math.max(0, start - 1)) + 1
-            let lineEnd = text.indexOf("\n", end)
-            if (lineEnd === -1) lineEnd = text.length
-            return { start: lineStart, end: lineEnd }
-          }
-
-          const expandRangeToFullLine = (range: Range) => {
-            const { startContainer, endContainer, startOffset, endOffset } = range
-            if (
-              startContainer !== endContainer ||
-              startContainer.nodeType !== Node.TEXT_NODE
-            ) {
-              return range.cloneRange()
-            }
-            const t = startContainer.textContent || ""
-            let { start: ls, end: le } = expandOffsetsToFullLine(t, startOffset, endOffset)
-            if (le <= ls) le = Math.min(t.length, ls + 1)
-            const r = document.createRange()
-            r.setStart(startContainer, Math.max(0, Math.min(ls, t.length)))
-            r.setEnd(startContainer, Math.max(0, Math.min(le, t.length)))
-            return r
-          }
-
-          const wrapRangeWithMark = (range: Range) => {
-            const mark = document.createElement("mark")
-            mark.setAttribute(HIGHLIGHT_ATTR, label)
-            mark.style.backgroundColor = `${highlightColor}33`
-            mark.style.outline = `2px solid ${highlightColor}`
-            mark.style.borderRadius = "4px"
-            mark.style.padding = "0 2px"
-            mark.style.boxShadow = `0 0 12px ${highlightColor}44`
-            mark.style.transition = "all 0.3s ease"
-
-            try {
-              range.surroundContents(mark)
-            } catch {
-              const frag = range.extractContents()
-              mark.appendChild(frag)
-              range.insertNode(mark)
-            }
-            mark.scrollIntoView({ behavior: "smooth", block: "center" })
-            return true
-          }
-
-          // First try browser-native text finding (handles cross-node text well).
-          const clauseBeforePeriod = firstClauseBeforeNonDecimalPeriod(core)
-          const nativeFindProbes = [
-            core,
-            core.slice(0, 260),
-            core.slice(0, 180),
-            core.slice(0, 120),
-            clauseBeforePeriod,
-            core.split(";")[0] || ""
-          ]
-            .map((x) => x.trim())
-            .filter((x) => x.length >= 18)
-
-          const selection = window.getSelection()
-          for (const probe of nativeFindProbes) {
-            selection?.removeAllRanges()
-            const found = (window as any).find(
-              probe,
-              false,
-              false,
-              true,
-              false,
-              false,
-              false
-            )
-            if (!found) continue
-            const sel = window.getSelection()
-            if (!sel || sel.rangeCount === 0) continue
-            const range = expandRangeToFullLine(sel.getRangeAt(0).cloneRange())
-            sel.removeAllRanges()
-            return wrapRangeWithMark(range)
-          }
-
-          const isVisibleTextNode = (node: Text) => {
-            const parent = node.parentElement
-            if (!parent) return false
-            const tag = parent.tagName
-            if (
-              tag === "SCRIPT" ||
-              tag === "STYLE" ||
-              tag === "NOSCRIPT" ||
-              tag === "TEXTAREA" ||
-              tag === "OPTION"
-            ) {
-              return false
-            }
-            const style = window.getComputedStyle(parent)
-            return style.display !== "none" && style.visibility !== "hidden"
-          }
-
-          type NodeRange = {
-            node: Text
-            start: number
-            end: number
-          }
-
-          const nodes: NodeRange[] = []
-          let flatRaw = ""
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-          while (walker.nextNode()) {
-            const node = walker.currentNode as Text
-            if (!node.textContent || !node.textContent.trim()) continue
-            if (!isVisibleTextNode(node)) continue
-            const start = flatRaw.length
-            flatRaw += node.textContent
-            const end = flatRaw.length
-            nodes.push({ node, start, end })
-            flatRaw += "\n"
-          }
-
-          if (!flatRaw || nodes.length === 0) return false
-
-          const docNorm = normalizeWithMap(flatRaw)
-          const quoteNorm = normalizeWithMap(core).text
-          if (!quoteNorm) return false
-
-          const categoryHints: Record<string, string[]> = {
-            unilateral_changes: ["change terms", "amend terms", "without notice", "continued use"],
-            retroactive_changes: ["retroactive", "prior conduct", "already collected"],
-            auto_renewal: ["auto-renew", "renews automatically", "subscription fee", "billing cycle"],
-            zombie_renewal: ["reminder", "automatically renew", "annual"],
-            arbitration_waiver: ["binding arbitration", "class action waiver", "jury trial"],
-            class_bar_standalone: ["class action", "representative action", "no class"],
-            data_rights: ["perpetual license", "irrevocable license", "third parties", "share data"],
-            data_succession: ["successor", "merger", "bankruptcy", "assign"],
-            cross_service_tracking: ["cross-service", "across our products", "combine data"],
-            fee_modification: ["price", "fee", "notice", "grandfather"],
-            cancellation_friction: ["non-refundable", "no refunds", "cancel", "cancellation fee"],
-            gag_clauses: ["non-disparagement", "negative review", "review"],
-            unilateral_interpretation: ["sole discretion", "interpret", "exclusive right"],
-            liquidated_damages_penalties: ["liquidated damages", "per breach", "infraction"],
-            one_way_attorneys_fees: ["attorneys fees", "prevailing party"],
-            no_injunctive_relief: ["injunctive", "equitable relief"],
-            mandatory_delay_tactics: ["mediation", "before filing", "days before"],
-            perpetual_restraint: ["non-compete", "survive termination"],
-            no_assignment_by_user: ["may not assign", "assignable"],
-            overbroad_ip_restrictions: ["reverse engineer", "decompile"],
-            device_exploitation: ["cryptomining", "processing power", "bandwidth"],
-            shadow_profiling: ["contacts", "data broker", "non-user"],
-            waiver_of_statutory_rights: ["ccpa", "gdpr", "waive"],
-            english_language_supremacy: ["english version", "translation"],
-            survival_of_termination_vague: ["survive termination", "necessary provisions"],
-            limitation_of_liability: ["limitation of liability", "consequential damages", "not liable"],
-            disclaimer_of_warranties: ["as is", "merchantability", "disclaimer of warranties"],
-            broad_indemnity: ["indemnify", "hold harmless", "defend"],
-            forum_selection_exclusive: ["exclusive jurisdiction", "exclusive venue", "jurisdiction"],
-            discretionary_termination: ["sole discretion", "suspend", "terminate"],
-            children_data_collection: ["under 13", "children", "parental consent"],
-            marketing_communications_burden: ["marketing", "promotional", "sms", "opt out"],
-            data_selling: ["sell personal information", "monetize data", "sale of data"],
-            private_message_monitoring: ["private message", "direct message", "monitor communications"],
-            device_fingerprinting: ["device fingerprint", "pixel tags", "web beacons"],
-            continuous_location_tracking: ["precise location", "geolocation", "background location", "gps"],
-            content_copyright_transfer: ["assign copyright", "exclusive license", "ownership"],
-            moral_rights_waiver: ["moral rights", "waive attribution", "credit"],
-            shortened_limitation_period: ["within one year", "time limit", "barred"],
-            data_deletion_friction: ["retain after deletion", "backup copies", "no obligation to delete"],
-            third_party_disclaimer: ["not responsible third-party", "at your own risk", "no control over"],
-            force_majeure_broad: ["force majeure", "acts of god", "beyond our control"],
-            ai_training_license: ["train ai", "machine learning", "llm", "training data"],
-            biometric_harvesting: ["biometric", "facial recognition", "voiceprint", "fingerprint"],
-            off_platform_tracking: ["browser history", "outside the service", "other applications", "keystroke"],
-            inactivity_fee_seizure: ["inactivity fee", "dormant account", "unused credits expire"],
-            no_refund_on_ban: ["without refund", "forfeit purchases", "no right to a refund"],
-            payment_method_updating: ["account updater", "updated credit card", "update payment information"],
-            beta_testing_waiver: ["beta features", "experimental", "at your own risk", "pre-release software"],
-            notice_of_breach_delay: ["notify within 60 days", "90 days", "120 days", "commercially reasonable time"],
-            consent_to_background_check: ["background check", "credit check", "criminal history"]
-          }
-
-          const tokenWords = quoteNorm
-            .split(" ")
-            .map((w) => w.trim())
-            .filter((w) => w.length > 2)
-          const quoteProbes = [
-            quoteNorm,
-            quoteNorm.slice(0, 260),
-            quoteNorm.slice(0, 180),
-            quoteNorm.slice(0, 120),
-            quoteNorm.slice(0, 80)
-          ].filter((p) => p.length >= 22)
-
-          let bestNormStart = -1
-          let bestNormLen = -1
-          let bestScore = -1
-
-          for (const probe of quoteProbes) {
-            const idx = docNorm.text.indexOf(probe)
-            if (idx !== -1 && probe.length > bestScore) {
-              bestNormStart = idx
-              bestNormLen = probe.length
-              bestScore = probe.length + 50
-              break
-            }
-          }
-
-          if (bestNormStart === -1 && tokenWords.length > 0) {
-            const anchorWords = tokenWords.slice(0, 12)
-            const first = anchorWords[0]
-            const expectedLen = Math.max(90, Math.min(340, quoteNorm.length + 60))
-            let idx = docNorm.text.indexOf(first)
-            while (idx !== -1) {
-              let score = 0
-              let cursor = idx
-              for (const w of anchorWords) {
-                const next = docNorm.text.indexOf(w, cursor)
-                if (next !== -1 && next - idx <= 520) {
-                  score += w.length
-                  cursor = next + w.length
-                }
-              }
-              const hints = (categoryHints[category] || []).map((h) =>
-                normalizeWithMap(h).text
-              )
-              for (const h of hints) {
-                if (h && docNorm.text.indexOf(h, idx) !== -1 && docNorm.text.indexOf(h, idx) - idx <= 520) {
-                  score += 8
-                }
-              }
-              if (score > bestScore) {
-                bestScore = score
-                bestNormStart = idx
-                bestNormLen = expectedLen
-              }
-              idx = docNorm.text.indexOf(first, idx + 1)
-            }
-          }
-
-          if (bestNormStart === -1 || bestScore < 20) return false
-
-          const normEnd = Math.min(docNorm.text.length, bestNormStart + bestNormLen)
-          const rawStart = docNorm.map[Math.max(0, bestNormStart)] ?? 0
-          const rawEnd = (docNorm.map[Math.max(0, normEnd - 1)] ?? rawStart) + 1
-          if (rawEnd <= rawStart) return false
-
-          let chosen: NodeRange | null = null
-          let chosenLocalStart = 0
-          let chosenLocalEnd = 0
-          let overlapBest = 0
-          for (const r of nodes) {
-            const overlapStart = Math.max(rawStart, r.start)
-            const overlapEnd = Math.min(rawEnd, r.end)
-            const overlap = overlapEnd - overlapStart
-            if (overlap > overlapBest) {
-              overlapBest = overlap
-              chosen = r
-              chosenLocalStart = overlapStart - r.start
-              chosenLocalEnd = overlapEnd - r.start
-            }
-          }
-
-          if (!chosen || overlapBest <= 0) return false
-          const nodeText = chosen.node.textContent || ""
-          if (!nodeText) return false
-          let start = Math.max(0, Math.min(chosenLocalStart, nodeText.length - 1))
-          let end = Math.max(start + 1, Math.min(chosenLocalEnd, nodeText.length))
-          const line = expandOffsetsToFullLine(nodeText, start, end)
-          start = line.start
-          end = line.end
-          if (end <= start) end = Math.min(nodeText.length, start + 1)
-
-          const range = document.createRange()
-          range.setStart(chosen.node, start)
-          range.setEnd(chosen.node, end)
-          return wrapRangeWithMark(range)
+        args: [cleanedQuote, issue.label, issue.category, redCatArray, hintsObj],
+        func: (evidenceQuote: string, label: string, category: string, redCats: string[], catHints: Record<string, string[]>) => {
+          const { highlightClauseOnPage: _unused, ..._ } = {} as any; void _unused; void _;
+          const HIGHLIGHT_ATTR = "data-fairterms-highlight";
+          document.querySelectorAll(`mark[${HIGHLIGHT_ATTR}]`).forEach((el) => {
+            const p = el.parentNode; if (!p) return;
+            p.replaceChild(document.createTextNode(el.textContent || ""), el); p.normalize();
+          });
+          const strip = (s: string) => { let t = (s||"").trim(); for(;;){let ch=false;if(t.length>=2){if((t[0]==='"'&&t.at(-1)==='"')||(t[0]==="'"&&t.at(-1)==="'")){t=t.slice(1,-1).trim();ch=true}else if(t[0]==="\u201c"&&t.at(-1)==="\u201d"){t=t.slice(1,-1).trim();ch=true}else if(t[0]==="\u2018"&&t.at(-1)==="\u2019"){t=t.slice(1,-1).trim();ch=true}}if(!ch)break}return t};
+          const cc = (c:string) => {if("\u201c\u201d\u201e\u201f".includes(c))return'"';if("\u2018\u2019\u201a\u201b".includes(c))return"'";if(c==="\u2013"||c==="\u2014")return"-";return c};
+          const nm = (raw:string) => {let out="";const map:number[]=[];let ps=true;for(let i=0;i<raw.length;i++){const c=cc(raw[i]).toLowerCase();const sp=/\s/.test(c);if(sp){if(!ps){out+=" ";map.push(i);ps=true}}else{out+=c;map.push(i);ps=false}}while(out.endsWith(" ")){out=out.slice(0,-1);map.pop()}return{text:out,map}};
+          const core=strip(evidenceQuote);if(!core)return false;
+          const redSet=new Set(redCats);
+          const hc=label.toLowerCase().includes("safe")||category==="safe"?"#22C55E":redSet.has(category)?"#EF4444":"#F59E0B";
+          const isDec=(s:string,i:number)=>{if(i<0||i>=s.length||s[i]!==".")return false;return/\d/.test(s[i-1]||"")&&/\d/.test(s[i+1]||"")};
+          const fcp=(s:string)=>{for(let i=0;i<s.length;i++){if(s[i]!==".")continue;if(isDec(s,i))continue;const sl=s.slice(0,i).trim();if(sl.length>=18)return sl}return""};
+          const eof=(t:string,s:number,e:number)=>{const ls=t.lastIndexOf("\n",Math.max(0,s-1))+1;let le=t.indexOf("\n",e);if(le===-1)le=t.length;return{start:ls,end:le}};
+          const erl=(range:Range)=>{const{startContainer:sc,endContainer:ec,startOffset:so,endOffset:eo}=range;if(sc!==ec||sc.nodeType!==Node.TEXT_NODE)return range.cloneRange();const t=sc.textContent||"";let{start:ls,end:le}=eof(t,so,eo);if(le<=ls)le=Math.min(t.length,ls+1);const r=document.createRange();r.setStart(sc,Math.max(0,Math.min(ls,t.length)));r.setEnd(sc,Math.max(0,Math.min(le,t.length)));return r};
+          const wm=(range:Range)=>{const m=document.createElement("mark");m.setAttribute(HIGHLIGHT_ATTR,label);m.style.backgroundColor=`${hc}33`;m.style.outline=`2px solid ${hc}`;m.style.borderRadius="4px";m.style.padding="0 2px";m.style.boxShadow=`0 0 12px ${hc}44`;m.style.transition="all 0.3s ease";try{range.surroundContents(m)}catch{const f=range.extractContents();m.appendChild(f);range.insertNode(m)}m.scrollIntoView({behavior:"smooth",block:"center"});return true};
+          const cp=fcp(core);const probes=[core,core.slice(0,260),core.slice(0,180),core.slice(0,120),cp,core.split(";")[0]||""].map(x=>x.trim()).filter(x=>x.length>=18);
+          const sel=window.getSelection();
+          for(const p of probes){sel?.removeAllRanges();const f=(window as any).find(p,false,false,true,false,false,false);if(!f)continue;const s=window.getSelection();if(!s||s.rangeCount===0)continue;const r=erl(s.getRangeAt(0).cloneRange());s.removeAllRanges();return wm(r)}
+          const vis=(n:Text)=>{const p=n.parentElement;if(!p)return false;const tag=p.tagName;if(tag==="SCRIPT"||tag==="STYLE"||tag==="NOSCRIPT"||tag==="TEXTAREA"||tag==="OPTION")return false;const st=window.getComputedStyle(p);return st.display!=="none"&&st.visibility!=="hidden"};
+          type NR={node:Text;start:number;end:number};const nodes:NR[]=[];let flat="";const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(w.nextNode()){const n=w.currentNode as Text;if(!n.textContent||!n.textContent.trim())continue;if(!vis(n))continue;const s=flat.length;flat+=n.textContent;nodes.push({node:n,start:s,end:flat.length});flat+="\n"}
+          if(!flat||!nodes.length)return false;const dn=nm(flat);const qn=nm(core).text;if(!qn)return false;
+          const tw=qn.split(" ").filter(w=>w.length>2);const qp=[qn,qn.slice(0,260),qn.slice(0,180),qn.slice(0,120),qn.slice(0,80)].filter(p=>p.length>=22);
+          let bns=-1,bnl=-1,bs=-1;
+          for(const p of qp){const i=dn.text.indexOf(p);if(i!==-1&&p.length>bs){bns=i;bnl=p.length;bs=p.length+50;break}}
+          if(bns===-1&&tw.length>0){const aw=tw.slice(0,12);const f=aw[0];const el=Math.max(90,Math.min(340,qn.length+60));let i=dn.text.indexOf(f);while(i!==-1){let sc=0,cu=i;for(const w of aw){const nx=dn.text.indexOf(w,cu);if(nx!==-1&&nx-i<=520){sc+=w.length;cu=nx+w.length}}const hints=(catHints[category]||[]).map(h=>nm(h).text);for(const h of hints){if(h&&dn.text.indexOf(h,i)!==-1&&dn.text.indexOf(h,i)-i<=520)sc+=8}if(sc>bs){bs=sc;bns=i;bnl=el}i=dn.text.indexOf(f,i+1)}}
+          if(bns===-1||bs<20)return false;
+          const ne=Math.min(dn.text.length,bns+bnl);const rs=dn.map[Math.max(0,bns)]??0;const re=(dn.map[Math.max(0,ne-1)]??rs)+1;if(re<=rs)return false;
+          let ch:NR|null=null,cls=0,cle=0,ob=0;for(const r of nodes){const os=Math.max(rs,r.start);const oe=Math.min(re,r.end);const o=oe-os;if(o>ob){ob=o;ch=r;cls=os-r.start;cle=oe-r.start}}
+          if(!ch||ob<=0)return false;const nt=ch.node.textContent||"";if(!nt)return false;
+          let st=Math.max(0,Math.min(cls,nt.length-1)),en=Math.max(st+1,Math.min(cle,nt.length));const ln=eof(nt,st,en);st=ln.start;en=ln.end;if(en<=st)en=Math.min(nt.length,st+1);
+          const rng=document.createRange();rng.setStart(ch.node,st);rng.setEnd(ch.node,en);return wm(rng);
         }
       }
 
@@ -534,24 +196,20 @@ function IndexPopup() {
 
         if (!isContextInvalidated) throw err
 
-        setActionMessage("Recovering stale extension context...")
+        setActionMessage(tr("recoverContext"))
         await chrome.tabs.reload(tab.id)
         await waitForTabReload(tab.id)
         didHighlight = await tryLocate()
       }
 
       if (didHighlight) {
-        setActionMessage(`Located: ${issue.label}`)
+        setActionMessage(`${tr("locatedPrefix")} ${issue.label}`)
       } else {
-        setActionMessage(
-          "Could not locate text on this page (try refreshing the tab, or the viewer may block highlighting)."
-        )
+        setActionMessage(tr("locateFailed"))
       }
     } catch (err) {
       // silent fail for highlight
-      setActionMessage(
-        "Could not locate text on this page (try refreshing the tab, or the viewer may block highlighting)."
-      )
+      setActionMessage(tr("locateFailed"))
     }
   }
 
@@ -632,8 +290,8 @@ function IndexPopup() {
               color: theme.textMuted
             }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>🛡️</div>
-              <div style={{ color: theme.success, fontWeight: 700, marginBottom: 4 }}>No Risks Detected</div>
-              <div style={{ fontSize: 12 }}>This document appears to follow standard fair practices.</div>
+              <div style={{ color: theme.success, fontWeight: 700, marginBottom: 4 }}>{tr("noRisksTitle")}</div>
+              <div style={{ fontSize: 12 }}>{tr("noRisksBody")}</div>
             </div>
           )}
         </div>
@@ -647,7 +305,7 @@ function IndexPopup() {
         color: theme.textMuted,
         opacity: 0.6
       }}>
-        {result?.disclaimer || "FairTerms AI • v0.1.0"}
+        {result?.disclaimer || tr("footerFallback")}
       </div>
     </div>
   )
