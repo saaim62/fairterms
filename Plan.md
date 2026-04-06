@@ -4,6 +4,8 @@ FairTerms is a Consumer Contract Guardian that helps people understand risky ter
 
 For setup, contributing, and licensing, see the root [README](README.md), [CONTRIBUTING](CONTRIBUTING.md), and [LICENSE](LICENSE).
 
+For a **post-MVP roadmap** toward production-grade completeness (~90–100%), see [ROADMAP.md](ROADMAP.md).
+
 ## Monorepo Structure
 
 ```text

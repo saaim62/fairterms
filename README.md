@@ -37,6 +37,7 @@ fairterms/
 ├── CODE_OF_CONDUCT.md
 ├── SECURITY.md
 ├── CHANGELOG.md
+├── ROADMAP.md
 ├── docker-compose.yml
 ├── Plan.md
 └── README.md
@@ -149,6 +150,12 @@ interface AnalyzeResponse {
 
 `text` is capped server-side (see `MAX_INPUT_TEXT_CHARS` in `apps/api/main.py`). The extension truncates client-side to its own limit before sending.
 
+### Rate limiting, CORS, and `confidence`
+
+- **`POST /analyze`** is rate-limited per client IP using [slowapi](https://github.com/laurents/slowapi) (default **30/minute** when enabled). Set `FAIRTERMS_RATE_LIMIT_ANALYZE` (for example `60/minute`, `10/second`) and toggle with `FAIRTERMS_RATE_LIMIT_ENABLED`. The limiter is **in-memory** per API process; use a shared store (for example Redis) behind slowapi if you run multiple replicas.
+- **CORS:** If `FAIRTERMS_CORS_ORIGINS` is unset, the API allows `*` only when **not** in production. With `FAIRTERMS_ENV=production` (or `prod`), you must set `FAIRTERMS_CORS_ORIGINS` explicitly (for example your `chrome-extension://…` origin). There is no browser authentication on `/analyze`; rate limits reduce abuse and LLM cost exposure when Groq is enabled.
+- **`issues[].confidence`:** Rule-based hits use fixed numeric tiers for **sorting and display**, not calibrated probabilities. Groq-sourced issues use the model’s value when present. See OpenAPI (`/docs`) for the field description.
+
 ## Docker
 
 ```bash
@@ -163,7 +170,7 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) (setup
 
 ## Security
 
-Report security issues privately as described in [SECURITY.md](SECURITY.md).
+Report security issues privately as described in [SECURITY.md](SECURITY.md). For a public deployment, combine rate limits with your own **API keys**, network controls, or a reverse proxy where appropriate; the defaults here target local and small-scale use.
 
 ## License
 
@@ -180,4 +187,4 @@ FairTerms provides informational risk signals and is **not legal advice**.
 - CI checks for analyzer quality
 - Expanded LLM-assisted reasoning where it improves grounded results
 
-See also [CHANGELOG.md](CHANGELOG.md).
+See also [CHANGELOG.md](CHANGELOG.md) and the phased [ROADMAP.md](ROADMAP.md) toward production-grade completeness.

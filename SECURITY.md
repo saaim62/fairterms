@@ -20,5 +20,5 @@ We aim to acknowledge reports within a few business days. Please allow reasonabl
 
 ## Scope notes
 
-- The API is intended to be deployed with appropriate **network controls**, **authentication**, and **rate limiting** in production; the reference `docker-compose.yml` is for development.
+- The API ships with **per-IP rate limiting** on `POST /analyze` (configurable; see root `README.md` and `apps/api/.env.example`). For public deployments, combine that with **network controls**, **API keys or auth** at the edge where appropriate; the reference `docker-compose.yml` is for development.
 - Never commit API keys, tokens, or `.env` files containing secrets.

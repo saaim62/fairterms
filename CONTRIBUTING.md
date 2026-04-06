@@ -39,6 +39,8 @@ cd apps/api
 pytest
 ```
 
+`conftest.py` sets `FAIRTERMS_RATE_LIMIT_ENABLED=0` by default so the suite does not hit `/analyze` rate limits. To exercise limits locally, unset that variable or set it to `1` and tune `FAIRTERMS_RATE_LIMIT_ANALYZE` (see `.env.example`).
+
 ### Browser extension (`apps/extension`)
 
 ```bash

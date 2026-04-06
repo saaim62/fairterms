@@ -21,8 +21,9 @@ See the [root README](../../README.md) for environment variables, Docker, and th
 
 | Module | Purpose |
 |--------|---------|
-| `main.py` | FastAPI app, CORS, request limits |
-| `services/analyzer.py` | Rule engine and merge with Groq output |
+| `main.py` | FastAPI app, CORS, body size limits, per-IP rate limit on `/analyze` |
+| `services/analyzer_rules.py` | Declarative regex rules (compiled at import) |
+| `services/analyzer.py` | Matching, locales, Groq merge, evidence snippets |
 | `services/category_registry.py` | Clause categories, labels, severities |
 | `services/groq_analyze.py` | Optional OpenAI-compatible Groq client |
 | `services/locale_patterns.py` | Extra regex banks per locale |

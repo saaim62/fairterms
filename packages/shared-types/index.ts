@@ -5,6 +5,10 @@ export interface RiskIssue {
   label: string
   severity: Exclude<RiskSeverity, "green">
   explanation: string
+  /**
+   * Relative strength for sorting and UI (rule hits use fixed tiers; Groq uses model output).
+   * Not a calibrated statistical probability.
+   */
   confidence: number
   evidence_quote: string
 }
