@@ -122,10 +122,9 @@ function IndexPopup() {
       const redCatArray = Array.from(RED_CATEGORY_KEYS)
       const hintsObj = CATEGORY_HINTS
       const locateScript = {
-        target: { tabId: tab.id },
+        target: { tabId: tab.id, allFrames: true },
         args: [cleanedQuote, issue.label, issue.category, redCatArray, hintsObj],
         func: (evidenceQuote: string, label: string, category: string, redCats: string[], catHints: Record<string, string[]>) => {
-          const { highlightClauseOnPage: _unused, ..._ } = {} as any; void _unused; void _;
           const HIGHLIGHT_ATTR = "data-fairterms-highlight";
           document.querySelectorAll(`mark[${HIGHLIGHT_ATTR}]`).forEach((el) => {
             const p = el.parentNode; if (!p) return;
@@ -162,8 +161,8 @@ function IndexPopup() {
       }
 
       const tryLocate = async () => {
-        const [res] = await chrome.scripting.executeScript(locateScript)
-        return Boolean(res?.result)
+        const results = await chrome.scripting.executeScript(locateScript)
+        return results.some((res) => Boolean(res.result))
       }
 
       const waitForTabReload = async (tabId: number) =>
