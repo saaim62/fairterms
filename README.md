@@ -2,7 +2,7 @@
 
 FairTerms is a **Consumer Contract Guardian** that scans Terms of Service and contract pages before users agree to them.
 
-It identifies risky clauses (auto-renewal traps, arbitration waivers, broad data rights, unilateral term changes, and hard-to-cancel terms), then shows clear traffic-light risk signals with evidence quotes.
+It identifies risky clauses (for example auto-renewal traps, arbitration waivers, broad data rights, unilateral changes, and cancellation friction), then shows clear traffic-light risk signals with evidence quotes.
 
 ## Why FairTerms
 
@@ -17,54 +17,43 @@ Most people do not have time to read long legal agreements. FairTerms helps by:
 
 The current MVP includes:
 
-- **Browser Extension (`apps/extension`)**
-  - Plasmo + React popup
-  - One-click page analysis
-  - Risk cards with severity and evidence snippets
-  - "Show on page" highlight and scroll behavior
-- **Backend API (`apps/api`)**
-  - FastAPI service
-  - `GET /health` endpoint
-  - `POST /analyze` endpoint for contract text analysis
-  - Rule-based clause detection plus optional **Groq** LLM pass (same categories, merged results)
-- **Shared Contracts (`packages/shared-types`)**
-  - TypeScript types used across extension and backend integration
-- **AI Engine Placeholder (`packages/ai-engine`)**
-  - planned package for stronger NLP/LLM-based analysis
+- **Browser Extension (`apps/extension`)** — Plasmo + React popup, one-click analysis, risk cards with severity and evidence snippets, “Show on page” highlight and scroll behavior.
+- **Backend API (`apps/api`)** — FastAPI service with `GET /health` and `POST /analyze`; rule-based clause detection plus optional **Groq** LLM pass (merged results).
+- **Shared contracts (`packages/shared-types`)** — TypeScript types shared with the extension.
+- **AI engine placeholder (`packages/ai-engine`)** — planned package for stronger NLP and evaluation.
 
-## Monorepo Structure
+## Monorepo structure
 
 ```text
 fairterms/
 ├── apps/
-│   ├── extension/          # Browser extension (Plasmo + React)
+│   ├── extension/          # Plasmo + React MV3 extension
 │   └── api/                # FastAPI backend
 ├── packages/
 │   ├── shared-types/       # Shared TypeScript types
-│   └── ai-engine/          # Python NLP utilities (planned)
+│   └── ai-engine/          # Python utilities (planned)
+├── LICENSE                 # MIT
+├── CONTRIBUTING.md
+├── CODE_OF_CONDUCT.md
+├── SECURITY.md
+├── CHANGELOG.md
 ├── docker-compose.yml
 ├── Plan.md
 └── README.md
 ```
 
-## Detection Categories (MVP)
+## Detection categories
 
-The analyzer currently checks for:
+The analyzer uses a fixed taxonomy of clause categories (red and yellow severities). The canonical list with labels and explanations is in [`apps/api/services/category_registry.py`](apps/api/services/category_registry.py). The README’s older “five categories” summary is illustrative only; the implementation covers many more consumer-risk patterns.
 
-1. **Auto-Renewal Trap** (red)
-2. **Forced Arbitration / Class Waiver** (red)
-3. **Broad Data Rights** (yellow)
-4. **Unilateral Term Changes** (yellow)
-5. **Hard-to-Cancel Terms** (yellow)
-
-## Tech Stack
+## Tech stack
 
 - **Extension:** Plasmo, React, TypeScript
-- **Backend:** FastAPI, Python
-- **Shared Types:** TypeScript interfaces
-- **Containerization:** Docker + Docker Compose
+- **Backend:** FastAPI, Python 3.10+
+- **Shared types:** TypeScript interfaces in `packages/shared-types`
+- **Containerization:** Docker Compose (API development)
 
-## Local Setup
+## Local setup
 
 ### Prerequisites
 
@@ -84,9 +73,9 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-Verify:
+Verify: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 
-- Health: `http://127.0.0.1:8000/health`
+More detail: [`apps/api/README.md`](apps/api/README.md).
 
 #### Optional: Groq (improved analysis)
 
@@ -113,6 +102,8 @@ In Chrome:
 3. Click **Load unpacked**
 4. Select: `apps/extension/build/chrome-mv3-dev`
 
+See [`apps/extension/README.md`](apps/extension/README.md) for build paths and permissions.
+
 ### 3) Production build (extension)
 
 ```bash
@@ -120,15 +111,11 @@ cd apps/extension
 npm run build
 ```
 
-Load unpacked from:
+Load unpacked from `apps/extension/build/chrome-mv3-prod`.
 
-- `apps/extension/build/chrome-mv3-prod`
-
-## API Contract
+## API contract
 
 ### `GET /health`
-
-Returns service status.
 
 ```json
 { "status": "ok" }
@@ -145,45 +132,52 @@ Request:
 }
 ```
 
-Response shape (from `packages/shared-types`):
+Response shape (see [`packages/shared-types/index.ts`](packages/shared-types/index.ts)):
 
 ```ts
 interface AnalyzeResponse {
   signal: "red" | "yellow" | "green"
   source_url?: string | null
   issue_count: number
-  analysis_source?: "rules" | "rules+groq"
-  issues: {
-    category: string
-    label: string
-    severity: "red" | "yellow"
-    explanation: string
-    confidence: number
-    evidence_quote: string
-  }[]
+  analysis_source: string
+  issues: RiskIssue[]
+  document_language?: string | null
+  rule_locales_used: string[]
   disclaimer: string
 }
 ```
 
-## Docker
+`text` is capped server-side (see `MAX_INPUT_TEXT_CHARS` in `apps/api/main.py`). The extension truncates client-side to its own limit before sending.
 
-Run API via Docker Compose:
+## Docker
 
 ```bash
 docker compose up --build
 ```
 
-API will be available on `http://localhost:8000`.
+API defaults to `http://localhost:8000`.
 
-## Notes
+## Contributing
 
-- FairTerms provides informational risk signals and is **not legal advice**.
-- Current analysis is deterministic/rule-based; AI-assisted classification is planned in `packages/ai-engine`.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) (setup, tests, pull requests) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
-## Roadmap (Next)
+## Security
+
+Report security issues privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+FairTerms is open source under the [MIT License](LICENSE).
+
+## Disclaimer
+
+FairTerms provides informational risk signals and is **not legal advice**.
+
+## Roadmap (indicative)
 
 - Improve clause localization and highlighting precision
-- Add confidence calibration + evaluation dataset
-- Add safe-clause positives and explainability scoring
-- Add tests and CI checks for analyzer quality
-- Expand to full LLM-assisted risk reasoning
+- Confidence calibration and evaluation datasets
+- CI checks for analyzer quality
+- Expanded LLM-assisted reasoning where it improves grounded results
+
+See also [CHANGELOG.md](CHANGELOG.md).

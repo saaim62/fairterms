@@ -1,10 +1,14 @@
 # @fairterms/ai-engine
 
-Python utilities for contract clause detection and risk scoring.
+Python utilities for contract clause detection and risk scoring (planned).
 
 ## Planned modules
 
-- clause taxonomy and labels
-- deterministic pattern rules
+- Clause taxonomy and labels aligned with `apps/api/services/category_registry.py`
+- Deterministic pattern rules and evaluation harness
 - LLM-assisted summarization and confidence calibration
-- evaluation harness for false-positive/false-negative tracking
+- False-positive / false-negative tracking for regression tests
+
+## License
+
+This repository is licensed under the [MIT License](../../LICENSE).

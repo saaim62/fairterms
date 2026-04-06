@@ -1,33 +1,45 @@
-This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
+# FairTerms browser extension
 
-## Getting Started
+Plasmo + React **Manifest V3** extension that extracts visible legal text from the active tab, sends it to the FairTerms API, and shows traffic-light risk cards with optional “show on page” highlighting.
 
-First, run the development server:
+## Requirements
+
+- Node.js 18+
+- npm or pnpm
+
+## Development
 
 ```bash
-pnpm dev
-# or
+npm install
 npm run dev
 ```
 
-Open your browser and load the appropriate development build. For example, if you are developing for the chrome browser, using manifest v3, use: `build/chrome-mv3-dev`.
+In Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → select:
 
-You can start editing the popup by modifying `popup.tsx`. It should auto-update as you make changes. To add an options page, simply add a `options.tsx` file to the root of the project, with a react component default exported. Likewise to add a content page, add a `content.ts` file to the root of the project, importing some module and do some logic, then reload the extension on your browser.
+`apps/extension/build/chrome-mv3-dev`
 
-For further guidance, [visit our Documentation](https://docs.plasmo.com/)
+Edit `popup.tsx` and related components; Plasmo hot-reloads when possible.
 
-## Making production build
-
-Run the following:
+## Production build
 
 ```bash
-pnpm build
-# or
 npm run build
 ```
 
-This should create a production bundle for your extension, ready to be zipped and published to the stores.
+Load from `build/chrome-mv3-prod` for a production-like bundle.
 
-## Submit to the webstores
+## Configuration
 
-The easiest way to deploy your Plasmo extension is to use the built-in [bpp](https://bpp.browser.market) GitHub action. Prior to using this action however, make sure to build your extension and upload the first version to the store to establish the basic credentials. Then, simply follow [this setup instruction](https://docs.plasmo.com/framework/workflows/submit) and you should be on your way for automated submission!
+The popup reads the API base URL from `chrome.storage.sync` (`apiUrl`). The default is `http://localhost:8000` (see `popup.tsx`). Point it at your self-hosted API in production.
+
+## Permissions
+
+The manifest requests `activeTab`, `scripting`, and `tabs`, plus broad `host_permissions` for reading page content and PDFs. Review `package.json` → `manifest` before publishing.
+
+## Repository layout
+
+This app lives under `apps/extension/` in the [FairTerms monorepo](../../README.md).
+
+## License
+
+[MIT](../../LICENSE)

@@ -2,6 +2,8 @@
 
 FairTerms is a Consumer Contract Guardian that helps people understand risky terms before they agree.
 
+For setup, contributing, and licensing, see the root [README](README.md), [CONTRIBUTING](CONTRIBUTING.md), and [LICENSE](LICENSE).
+
 ## Monorepo Structure
 
 ```text
@@ -11,7 +13,9 @@ fairterms/
 │   └── api/                # FastAPI backend
 ├── packages/
 │   ├── shared-types/       # Shared TypeScript types
-│   └── ai-engine/          # Python NLP utilities
+│   └── ai-engine/          # Python NLP utilities (planned)
+├── LICENSE
+├── CONTRIBUTING.md
 ├── docker-compose.yml
 └── README.md
 ```
