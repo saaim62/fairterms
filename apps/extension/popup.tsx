@@ -4,7 +4,7 @@ import { AnalyzeButton } from "./components/AnalyzeButton"
 import { IssueCard } from "./components/IssueCard"
 import { PopupHeader } from "./components/PopupHeader"
 import { StatusCard } from "./components/StatusCard"
-import { extractTabTextForAnalyze } from "./lib/extractPageText"
+import { extractTabTextForAnalyze, isPdfLikeTabUrl } from "./lib/extractPageText"
 import { tr } from "./lib/uiStrings"
 import { theme } from "./styles/theme"
 import { RED_CATEGORY_KEYS, CATEGORY_HINTS } from "./lib/categoryMeta"
@@ -50,6 +50,8 @@ function IndexPopup() {
   const [error, setError] = useState("")
   const [actionMessage, setActionMessage] = useState("")
   const [result, setResult] = useState<AnalyzeResponse | null>(null)
+  /** Tab URL at analyze time; used to hide locate on PDF viewer tabs. */
+  const [analyzedTabUrl, setAnalyzedTabUrl] = useState<string | undefined>(undefined)
 
   const signalLabel = useMemo(() => {
     if (!result) return tr("awaitingScan")
@@ -75,6 +77,7 @@ function IndexPopup() {
     setLoading(true)
     setError("")
     setActionMessage("")
+    setAnalyzedTabUrl(undefined)
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) {
@@ -102,6 +105,7 @@ function IndexPopup() {
       }
 
       const json = (await response.json()) as AnalyzeResponse
+      setAnalyzedTabUrl(tab.url)
       setResult(json)
     } catch (err) {
       const message = err instanceof Error ? err.message : "Analysis failed"
@@ -116,6 +120,9 @@ function IndexPopup() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) return
+      if (isPdfLikeTabUrl(tab.url ?? analyzedTabUrl)) {
+        return
+      }
 
       const cleanedQuote = cleanEvidenceForLocate(issue.evidence_quote)
 
@@ -279,6 +286,7 @@ function IndexPopup() {
               key={`${issue.category}-${idx}`}
               issue={issue}
               onShowOnPage={showIssueOnPage}
+              showLocateButton={!isPdfLikeTabUrl(analyzedTabUrl)}
             />
           ))}
           

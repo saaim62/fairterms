@@ -103,6 +103,22 @@ function extractPdfUrlCandidate(tabUrl: string): string {
   return ""
 }
 
+/**
+ * True when the active tab is a PDF (or Chrome's built-in PDF viewer).
+ * In-page locate/highlight does not work reliably there; analysis may still use fetched text.
+ */
+export function isPdfLikeTabUrl(tabUrl: string | undefined): boolean {
+  if (!tabUrl) return false
+  if (looksLikePdfUrl(tabUrl)) return true
+  if (tabUrl.startsWith("chrome-extension://")) {
+    const extracted = extractPdfUrlCandidate(tabUrl)
+    if (extracted && looksLikePdfUrl(extracted)) return true
+    // Chrome's PDF viewer extension (stable channel)
+    if (tabUrl.includes("mhjfbmdgcfjbbpaeojofohoefgiehjai")) return true
+  }
+  return false
+}
+
 function collectPdfCandidatesFromPage(): string[] {
   const urls = new Set<string>()
   const elements = Array.from(document.querySelectorAll("iframe,embed,object,a"))

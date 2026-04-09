@@ -5,9 +5,15 @@ import { theme } from "../styles/theme"
 interface IssueCardProps {
   issue: RiskIssue
   onShowOnPage: (issue: RiskIssue) => void
+  /** False for PDF / built-in viewer tabs where DOM highlight is not supported. */
+  showLocateButton?: boolean
 }
 
-export const IssueCard = ({ issue, onShowOnPage }: IssueCardProps) => (
+export const IssueCard = ({
+  issue,
+  onShowOnPage,
+  showLocateButton = true
+}: IssueCardProps) => (
   <div
     style={{
       border: `1px solid ${theme.border}`,
@@ -66,21 +72,23 @@ export const IssueCard = ({ issue, onShowOnPage }: IssueCardProps) => (
         : issue.evidence_quote}
     </div>
 
-    <button
-      onClick={() => onShowOnPage(issue)}
-      style={{
-        width: "100%",
-        border: `1px solid ${theme.secondary}44`,
-        borderRadius: 8,
-        background: "rgba(34, 211, 238, 0.05)",
-        color: theme.secondary,
-        padding: "8px 12px",
-        fontSize: 12,
-        fontWeight: 600,
-        cursor: "pointer",
-        transition: "all 0.2s ease"
-      }}>
-      {tr("locateInDoc")}
-    </button>
+    {showLocateButton ? (
+      <button
+        onClick={() => onShowOnPage(issue)}
+        style={{
+          width: "100%",
+          border: `1px solid ${theme.secondary}44`,
+          borderRadius: 8,
+          background: "rgba(34, 211, 238, 0.05)",
+          color: theme.secondary,
+          padding: "8px 12px",
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          transition: "all 0.2s ease"
+        }}>
+        {tr("locateInDoc")}
+      </button>
+    ) : null}
   </div>
 )
