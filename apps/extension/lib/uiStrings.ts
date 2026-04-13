@@ -1,6 +1,8 @@
 /**
- * Popup UI copy (detection uses API; this is chrome/browser UI language only).
+ * Popup UI copy (detection uses API; this follows the browser UI language when available).
  */
+
+import browser from "./extensionApi"
 
 export type UiLocale = "en" | "es" | "de" | "fr"
 
@@ -27,7 +29,7 @@ const EN: Messages = {
   warning: "Warning",
   locateInDoc: "Locate in Document",
   noReadableText:
-    "No readable text found. For PDFs: enable “Allow access to file URLs” in chrome://extensions for local files, and note some scanned/image-only PDFs do not contain selectable text.",
+    "No readable text found. For local PDFs: in your browser’s extension settings, allow this extension to access file URLs. Scanned or image-only PDFs may have no selectable text.",
   footerFallback: "FairTerms AI • v0.1.0"
 }
 
@@ -53,7 +55,7 @@ const ES: Messages = {
   warning: "Advertencia",
   locateInDoc: "Ubicar en el documento",
   noReadableText:
-    "No hay texto legible. Para PDF locales: active “Permitir acceso a URL de archivo” para FairTerms en chrome://extensions. Los PDF escaneados pueden no tener texto seleccionable.",
+    "No hay texto legible. Para PDF locales: en la configuración de extensiones del navegador, permita el acceso a archivos locales. Los PDF escaneados pueden no tener texto seleccionable.",
   footerFallback: "FairTerms IA • v0.1.0"
 }
 
@@ -79,7 +81,7 @@ const DE: Messages = {
   warning: "Warnung",
   locateInDoc: "Im Dokument suchen",
   noReadableText:
-    "Kein lesbarer Text. Für lokale PDFs: „Zugriff auf Datei-URLs“ für FairTerms unter chrome://extensions erlauben. Gescannte PDFs enthalten oft keinen Text.",
+    "Kein lesbarer Text. Für lokale PDFs: in den Erweiterungseinstellungen des Browsers Zugriff auf Datei-URLs erlauben. Gescannte PDFs enthalten oft keinen Text.",
   footerFallback: "FairTerms KI • v0.1.0"
 }
 
@@ -105,7 +107,7 @@ const FR: Messages = {
   warning: "Avertissement",
   locateInDoc: "Repérer dans le document",
   noReadableText:
-    "Aucun texte lisible. Pour les PDF locaux : autorisez l’accès aux URL de fichier pour FairTerms dans chrome://extensions. Les PDF numérisés peuvent ne pas contenir de texte sélectionnable.",
+    "Aucun texte lisible. Pour les PDF locaux : dans les paramètres d’extensions du navigateur, autorisez l’accès aux fichiers. Les PDF numérisés peuvent ne pas contenir de texte sélectionnable.",
   footerFallback: "FairTerms IA • v0.1.0"
 }
 
@@ -122,8 +124,10 @@ export function getUiLocale(): UiLocale {
   if (_cachedLocale) return _cachedLocale
   try {
     const raw =
-      typeof chrome !== "undefined" && chrome.i18n?.getUILanguage
-        ? chrome.i18n.getUILanguage()
+      typeof browser !== "undefined" &&
+      browser.i18n &&
+      typeof browser.i18n.getUILanguage === "function"
+        ? browser.i18n.getUILanguage()
         : typeof navigator !== "undefined"
           ? navigator.language
           : "en"

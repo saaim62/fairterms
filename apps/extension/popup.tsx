@@ -4,6 +4,7 @@ import { AnalyzeButton } from "./components/AnalyzeButton"
 import { IssueCard } from "./components/IssueCard"
 import { PopupHeader } from "./components/PopupHeader"
 import { StatusCard } from "./components/StatusCard"
+import browser from "./lib/extensionApi"
 import { extractTabTextForAnalyze, isPdfLikeTabUrl } from "./lib/extractPageText"
 import { tr } from "./lib/uiStrings"
 import { theme } from "./styles/theme"
@@ -14,7 +15,7 @@ const DEFAULT_API_URL = "http://localhost:8000"
 
 async function getApiUrl(): Promise<string> {
   try {
-    const result = await chrome.storage.sync.get({ apiUrl: DEFAULT_API_URL })
+    const result = await browser.storage.sync.get({ apiUrl: DEFAULT_API_URL })
     return (result.apiUrl || DEFAULT_API_URL).replace(/\/+$/, "")
   } catch {
     return DEFAULT_API_URL
@@ -79,7 +80,7 @@ function IndexPopup() {
     setActionMessage("")
     setAnalyzedTabUrl(undefined)
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) {
         throw new Error(tr("noTab"))
       }
@@ -118,7 +119,7 @@ function IndexPopup() {
   const showIssueOnPage = async (issue: RiskIssue) => {
     setActionMessage("")
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) return
       if (isPdfLikeTabUrl(tab.url ?? analyzedTabUrl)) {
         return
@@ -168,24 +169,24 @@ function IndexPopup() {
       }
 
       const tryLocate = async () => {
-        const results = await chrome.scripting.executeScript(locateScript)
+        const results = await browser.scripting.executeScript(locateScript)
         return results.some((res) => Boolean(res.result))
       }
 
       const waitForTabReload = async (tabId: number) =>
         await new Promise<void>((resolve) => {
           let done = false
-          const onUpdated = (updatedTabId: number, info: chrome.tabs.TabChangeInfo) => {
+          const onUpdated = (updatedTabId: number, info: { status?: string }) => {
             if (updatedTabId === tabId && info.status === "complete") {
-              chrome.tabs.onUpdated.removeListener(onUpdated)
+              browser.tabs.onUpdated.removeListener(onUpdated)
               done = true
               resolve()
             }
           }
-          chrome.tabs.onUpdated.addListener(onUpdated)
+          browser.tabs.onUpdated.addListener(onUpdated)
           setTimeout(() => {
             if (!done) {
-              chrome.tabs.onUpdated.removeListener(onUpdated)
+              browser.tabs.onUpdated.removeListener(onUpdated)
               resolve()
             }
           }, 6000)
@@ -203,7 +204,7 @@ function IndexPopup() {
         if (!isContextInvalidated) throw err
 
         setActionMessage(tr("recoverContext"))
-        await chrome.tabs.reload(tab.id)
+        await browser.tabs.reload(tab.id)
         await waitForTabReload(tab.id)
         didHighlight = await tryLocate()
       }

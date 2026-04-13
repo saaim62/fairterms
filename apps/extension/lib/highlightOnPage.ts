@@ -1,6 +1,6 @@
 /**
  * Injected into the active tab to locate and highlight a clause on the page.
- * Must be self-contained — no imports/closures (serialized by chrome.scripting.executeScript).
+ * Must be self-contained — no imports/closures (serialized by MV3 `scripting.executeScript`).
  */
 
 import { RED_CATEGORY_KEYS, CATEGORY_HINTS } from "./categoryMeta"

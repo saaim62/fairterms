@@ -1,0 +1,20 @@
+# Render Blueprint: https://render.com/docs/infrastructure-as-code
+# After first deploy, set FAIRTERMS_CORS_ORIGINS (and optional GROQ_API_KEY) in the dashboard.
+# Free tier requires a public Git repo — see https://render.com/docs/free
+
+services:
+  - type: web
+    name: fairterms-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: ./apps/api
+    healthCheckPath: /health
+    envVars:
+      - key: FAIRTERMS_ENV
+        value: production
+      - key: FAIRTERMS_CORS_ORIGINS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

@@ -17,6 +17,20 @@ uvicorn main:app --reload --port 8000
 
 See the [root README](../../README.md) for environment variables, Docker, and the full API contract.
 
+## Deploy on Render
+
+Use the repo-root [`render.yaml`](../../render.yaml) (**Blueprint** → New Blueprint Instance) or create a **Web Service** manually:
+
+1. **Runtime:** Docker  
+2. **Dockerfile path:** `apps/api/Dockerfile`  
+3. **Docker build context:** `apps/api`  
+4. **Health check path:** `/health`  
+5. **Environment:** `FAIRTERMS_ENV=production`  
+6. **Set `FAIRTERMS_CORS_ORIGINS`** to your extension origin(s), e.g. `chrome-extension://YOUR_EXTENSION_ID` (comma-separated if several).  
+7. Optionally set **`GROQ_API_KEY`** (secret) for the LLM pass.
+
+The API listens on Render’s **`PORT`** (see `Dockerfile`); local Docker still defaults to **8000**.
+
 ## Key modules
 
 | Module | Purpose |

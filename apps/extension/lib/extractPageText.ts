@@ -1,7 +1,9 @@
 /**
- * Chrome’s built-in PDF viewer often leaves `document.body.innerText` empty; we scan
+ * Chromium / Firefox built-in PDF viewers often leave `document.body.innerText` empty; we scan
  * all frames (text layers + shadow roots) and optionally fetch-parse the PDF URL.
  */
+
+import browser from "./extensionApi"
 
 export const MAX_ANALYZE_CHARS = 30000
 
@@ -36,12 +38,18 @@ function looksLikePdfUrl(url: string): boolean {
   return url.toLowerCase().includes("application/pdf")
 }
 
-function isBlockedChromeUrl(url: string): boolean {
+/** URLs we must not fetch as HTTP(S) (browser internals and extension origins). */
+function isBlockedInternalOrExtensionUrl(url: string): boolean {
+  const u = url.toLowerCase()
   return (
-    url.startsWith("chrome://") ||
-    url.startsWith("chrome-extension://") ||
-    url.startsWith("edge://") ||
-    url.startsWith("about:")
+    u.startsWith("chrome://") ||
+    u.startsWith("chrome-extension://") ||
+    u.startsWith("edge://") ||
+    u.startsWith("brave://") ||
+    u.startsWith("opera://") ||
+    u.startsWith("vivaldi://") ||
+    u.startsWith("moz-extension://") ||
+    u.startsWith("about:")
   )
 }
 
@@ -78,6 +86,7 @@ function normalizePdfCandidate(raw: string): string {
 /**
  * Chrome PDF viewer often wraps the real URL:
  * - chrome-extension://.../index.html?src=file%3A%2F%2F...pdf
+ * - moz-extension://... (Firefox PDF.js) with similar query params
  * - chrome-extension://.../index.html?file=https%3A%2F%2F...pdf
  */
 function extractPdfUrlCandidate(tabUrl: string): string {
@@ -110,10 +119,10 @@ function extractPdfUrlCandidate(tabUrl: string): string {
 export function isPdfLikeTabUrl(tabUrl: string | undefined): boolean {
   if (!tabUrl) return false
   if (looksLikePdfUrl(tabUrl)) return true
-  if (tabUrl.startsWith("chrome-extension://")) {
+  if (tabUrl.startsWith("chrome-extension://") || tabUrl.startsWith("moz-extension://")) {
     const extracted = extractPdfUrlCandidate(tabUrl)
     if (extracted && looksLikePdfUrl(extracted)) return true
-    // Chrome's PDF viewer extension (stable channel)
+    // Chromium built-in PDF viewer extension (stable channel)
     if (tabUrl.includes("mhjfbmdgcfjbbpaeojofohoefgiehjai")) return true
   }
   return false
@@ -154,7 +163,7 @@ function collectPdfCandidatesFromPage(): string[] {
 async function extractTextFromPdfUrl(url: string, maxChars: number): Promise<string> {
   try {
     const pdfjs = await import("pdfjs-dist/build/pdf.mjs")
-    const workerSrc = chrome.runtime.getURL("assets/pdf.worker.min.mjs")
+    const workerSrc = browser.runtime.getURL("assets/pdf.worker.min.mjs")
     pdfjs.GlobalWorkerOptions.workerSrc = workerSrc
 
     const res = await fetch(url, { credentials: "omit", cache: "no-cache" })
@@ -201,9 +210,9 @@ export async function extractTabTextForAnalyze(
   tabId: number,
   tabUrl: string | undefined
 ): Promise<string> {
-  let injectionResults: chrome.scripting.InjectionResult<string>[] = []
+  let injectionResults: Awaited<ReturnType<typeof browser.scripting.executeScript>> = []
   try {
-    injectionResults = await chrome.scripting.executeScript({
+    injectionResults = await browser.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: scrapeFrameTextForInjection as () => string
     })
@@ -233,7 +242,7 @@ export async function extractTabTextForAnalyze(
 
   if (!looksLikePdfUrl(directUrl)) {
     try {
-      const pdfCandidates = await chrome.scripting.executeScript({
+      const pdfCandidates = await browser.scripting.executeScript({
         target: { tabId, allFrames: true },
         func: collectPdfCandidatesFromPage as () => string[]
       })
@@ -249,7 +258,10 @@ export async function extractTabTextForAnalyze(
 
   const normalizedCandidates = candidates
     .map((raw) => normalizePdfCandidate(raw))
-    .filter((candidate) => candidate && looksLikePdfUrl(candidate) && !isBlockedChromeUrl(candidate))
+    .filter(
+      (candidate) =>
+        candidate && looksLikePdfUrl(candidate) && !isBlockedInternalOrExtensionUrl(candidate)
+    )
 
   for (const candidate of normalizedCandidates) {
     const fromPdf = await extractTextFromPdfUrl(candidate, MAX_ANALYZE_CHARS)
