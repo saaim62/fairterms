@@ -5,13 +5,12 @@ import { IssueCard } from "./components/IssueCard"
 import { PopupHeader } from "./components/PopupHeader"
 import { StatusCard } from "./components/StatusCard"
 import browser from "./lib/extensionApi"
+import { DEFAULT_API_URL } from "./lib/defaultApiUrl"
 import { extractTabTextForAnalyze, isPdfLikeTabUrl } from "./lib/extractPageText"
 import { tr } from "./lib/uiStrings"
 import { theme } from "./styles/theme"
 import { RED_CATEGORY_KEYS, CATEGORY_HINTS } from "./lib/categoryMeta"
 import type { AnalyzeResponse, RiskIssue } from "../../packages/shared-types"
-
-const DEFAULT_API_URL = "http://localhost:8000"
 
 async function getApiUrl(): Promise<string> {
   try {
@@ -92,7 +91,9 @@ function IndexPopup() {
       }
 
       const apiBase = await getApiUrl()
-      const response = await fetch(`${apiBase}/analyze`, {
+      const analyzeUrl = `${apiBase}/analyze`
+      console.info("[FairTerms] POST", analyzeUrl)
+      const response = await fetch(analyzeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
